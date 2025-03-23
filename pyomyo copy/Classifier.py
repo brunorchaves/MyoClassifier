@@ -15,7 +15,7 @@ import socket
 data_queue = queue.Queue()
 host, port = "127.0.0.1", 25001
 data = []
-TRANSMIT_MODE = False
+TRANSMIT_MODE = True
 
 SUBSAMPLE = 3
 K = 15
@@ -163,41 +163,7 @@ class MyoClassifier(Myo):
         keyboard.release(key)
 
     def run_gui(self, hnd, scr, font, w, h):
-        """Run the Pygame GUI."""
-        for ev in pygame.event.get():
-            if ev.type == QUIT or (ev.type == KEYDOWN and ev.unicode == 'q'):
-                raise KeyboardInterrupt()
-            elif ev.type == KEYDOWN:
-                if K_0 <= ev.key <= K_9:
-                    hnd.recording = ev.key - K_0
-                elif ev.unicode == 'r':
-                    hnd.cl.read_data()
-                elif ev.unicode == 'e':
-                    print("Pressed e, erasing local data")
-                    self.cls.delete_data()
-            elif ev.type == KEYUP:
-                if K_0 <= ev.key <= K_9:
-                    hnd.recording = -1
-
-        # Plotting
-        scr.fill((0, 0, 0), (0, 0, w, h))
-        r = self.history_cnt.most_common(1)[0][0]
-
-        for i in range(10):
-            x = 0
-            y = 0 + 30 * i
-            clr = self.cls.color if i == r else (255, 255, 255)
-
-            txt = font.render(f'{self.history_cnt[i]:5d}', True, (255, 255, 255))
-            scr.blit(txt, (x + 20, y))
-
-            txt = font.render(f'{i}', True, clr)
-            scr.blit(txt, (x + 110, y))
-
-            scr.fill((0, 0, 0), (x + 130, y + txt.get_height() / 2 - 10, len(self.history) * 20, 20))
-            scr.fill(clr, (x + 130, y + txt.get_height() / 2 - 10, self.history_cnt[i] * 20, 20))
-
-        pygame.display.flip()
+        a = 1
 
 class EMGHandler:
     """Handle EMG data and store it for training."""
@@ -213,10 +179,10 @@ class EMGHandler:
             self.m.cls.store_data(self.recording, emg)
 
 if __name__ == '__main__':
-    pygame.init()
+    # pygame.init()
     w, h = 800, 320
-    scr = pygame.display.set_mode((w, h))
-    font = pygame.font.Font(None, 30)
+    # scr = pygame.display.set_mode((w, h))
+    # font = pygame.font.Font(None, 30)
     yaw, pitch, roll = 1.0, 2.0, 3.0
     control_value = 1
     yaw_zero = 0
@@ -229,7 +195,7 @@ if __name__ == '__main__':
 
     m.add_raw_pose_handler(print)
     m.set_leds(m.cls.color, m.cls.color)
-    pygame.display.set_caption(m.cls.name)
+    # pygame.display.set_caption(m.cls.name)
 
     try:
         if TRANSMIT_MODE:
@@ -255,7 +221,7 @@ if __name__ == '__main__':
                 print(data)
 
             m.run()
-            m.run_gui(hnd, scr, font, w, h)
+            # m.run_gui(hnd, scr, font, w, h)
 
             if TRANSMIT_MODE:
                 sock.sendall(data.encode("utf-8"))
@@ -266,4 +232,4 @@ if __name__ == '__main__':
         pass
     finally:
         m.disconnect()
-        pygame.quit()
+        # pygame.quit()
