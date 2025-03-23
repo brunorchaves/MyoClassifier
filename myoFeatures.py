@@ -187,18 +187,28 @@ def difference_absolute_standard_deviation_value(data):
 def maximum_fractal_length(data):
     return np.log10(np.sum(np.square(np.diff(data))))
 
-# Function to extract features from a window
+# Function to extract features from a window for all 8 channels
 def extract_features(window):
+    """
+    Extract features from a window of EMG data for all 8 channels.
+    
+    Args:
+        window (numpy array): A window of EMG data with shape (window_size, 8).
+    
+    Returns:
+        list: A list of features for all 8 channels, followed by the label.
+    """
     features = []
-    for channel in range(8):  # 8 channels in Myo Armband
-        channel_data = window[:, channel]
-        features.append([
+    for channel in range(8):  # Loop through all 8 channels
+        channel_data = window[:, channel]  # Extract data for the current channel
+        channel_features = [
             enhanced_wavelength(channel_data),
             root_mean_square(channel_data),
             modified_mean_absolute_value_2(channel_data),
             difference_absolute_standard_deviation_value(channel_data),
             maximum_fractal_length(channel_data)
-        ])
+        ]
+        features.extend(channel_features)  # Add features for the current channel to the list
     return features
 
 # Function to create windows and label them
@@ -298,12 +308,16 @@ def record_emg_data(gesture_type, duration=5):
     # Extract features for each window
     feature_data = []
     for window, label in zip(windowed_data, window_labels):
-        features = extract_features(window)
-        for channel_features in features:
-            feature_data.append(channel_features + [label])  # Append label to features
+        features = extract_features(window)  # Extract features for all 8 channels
+        feature_data.append(features + [label])  # Append label to features
+
+    # Define column names for the dataset
+    columns = []
+    for channel in range(1, 9):  # Loop through all 8 channels
+        columns.extend([f'EWL_{channel}', f'RMS_{channel}', f'MMAV2_{channel}', f'DASDV_{channel}', f'MFL_{channel}'])
+    columns.append('Label')  # Add the label column
 
     # Convert to DataFrame
-    columns = ['EWL', 'RMS', 'MMAV2', 'DASDV', 'MFL', 'Label']
     df = pd.DataFrame(feature_data, columns=columns)
 
     # Save or append to CSV

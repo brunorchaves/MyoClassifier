@@ -1,16 +1,17 @@
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score
-from sklearn.decomposition import PCA
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-import joblib  # For saving the model
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import SimpleRNN, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import EarlyStopping
+import pickle  # For saving the scaler
 
-# Function to load CSV data
-def load_csv_data(file_path):
+# Load the dataset
+def load_dataset(file_path):
     """
-    Load features and labels from a CSV file.
+    Load the dataset from a CSV file.
     
     Args:
         file_path (str): Path to the CSV file.
@@ -20,83 +21,152 @@ def load_csv_data(file_path):
         y (numpy array): Labels.
     """
     df = pd.read_csv(file_path)
-    X = df.iloc[:, :-1].values  # All columns except the last one are features
-    y = df.iloc[:, -1].values   # Last column is the label
+    X = df.iloc[:, :-1].values  # All columns except the last one (features)
+    y = df.iloc[:, -1].values   # Last column (labels)
     return X, y
 
-# Function to train SKNN model
-def train_sknn(X_train, y_train):
+# Preprocess the data
+def preprocess_data(X, y):
     """
-    Train a Subspace K-Nearest Neighbors (SKNN) model.
+    Preprocess the data for training an RNN model.
     
     Args:
-        X_train (numpy array): Training features.
-        y_train (numpy array): Training labels.
+        X (numpy array): Features.
+        y (numpy array): Labels.
     
     Returns:
-        model: Trained SKNN model.
+        X_train (numpy array): Training features.
+        X_test (numpy array): Testing features.
+        y_train (numpy array): Training labels.
+        y_test (numpy array): Testing labels.
     """
-    # Create a pipeline with PCA for dimensionality reduction and SKNN
-    pipeline = Pipeline([
-        ('scaler', StandardScaler()),  # Standardize features
-        ('pca', PCA(n_components=0.95)),  # Reduce dimensions while retaining 95% variance
-        ('sknn', KNeighborsClassifier(n_neighbors=5, algorithm='auto'))  # SKNN classifier
-    ])
+    # Normalize the features
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+    
+    # Save the scaler to a file
+    with open('scaler.pkl', 'wb') as f:
+        pickle.dump(scaler, f)
+    print("Scaler saved to 'scaler.pkl'.")
+    
+    # Convert labels to one-hot encoding
+    y = to_categorical(y)
+    
+    # Split the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Reshape the data for RNN input (samples, timesteps, features)
+    # Here, we assume each window is a timestep, and features are the 40 features (5 features * 8 channels)
+    X_train = X_train.reshape((X_train.shape[0], 1, X_train.shape[1]))
+    X_test = X_test.reshape((X_test.shape[0], 1, X_test.shape[1]))
+    
+    return X_train, X_test, y_train, y_test
+
+# Build the RNN model
+def build_rnn_model(input_shape, num_classes):
+    """
+    Build an RNN model for gesture classification.
+    
+    Args:
+        input_shape (tuple): Shape of the input data (timesteps, features).
+        num_classes (int): Number of gesture classes.
+    
+    Returns:
+        model (keras model): Compiled RNN model.
+    """
+    model = Sequential()
+    
+    # Add a SimpleRNN layer
+    model.add(SimpleRNN(64, input_shape=input_shape, return_sequences=False))
+    model.add(Dropout(0.2))  # Add dropout for regularization
+    
+    # Add a Dense output layer
+    model.add(Dense(num_classes, activation='softmax'))
+    
+    # Compile the model
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    
+    return model
+
+# Train the model
+def train_model(model, X_train, y_train, X_test, y_test, epochs=50, batch_size=32):
+    """
+    Train the RNN model.
+    
+    Args:
+        model (keras model): Compiled RNN model.
+        X_train (numpy array): Training features.
+        y_train (numpy array): Training labels.
+        X_test (numpy array): Testing features.
+        y_test (numpy array): Testing labels.
+        epochs (int): Number of training epochs.
+        batch_size (int): Batch size for training.
+    
+    Returns:
+        history (keras history): Training history.
+    """
+    # Early stopping to prevent overfitting
+    early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
     
     # Train the model
-    pipeline.fit(X_train, y_train)
-    return pipeline
+    history = model.fit(
+        X_train, y_train,
+        validation_data=(X_test, y_test),
+        epochs=epochs,
+        batch_size=batch_size,
+        callbacks=[early_stopping]
+    )
+    
+    return history
 
-# Function to evaluate the model
+# Evaluate the model
 def evaluate_model(model, X_test, y_test):
     """
     Evaluate the trained model on the test set.
     
     Args:
-        model: Trained SKNN model.
-        X_test (numpy array): Test features.
-        y_test (numpy array): Test labels.
-    
-    Returns:
-        accuracy (float): Accuracy of the model on the test set.
+        model (keras model): Trained RNN model.
+        X_test (numpy array): Testing features.
+        y_test (numpy array): Testing labels.
     """
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    return accuracy
+    loss, accuracy = model.evaluate(X_test, y_test)
+    print(f"Test Loss: {loss:.4f}")
+    print(f"Test Accuracy: {accuracy:.4f}")
 
-# Function to save the model locally
+# Save the model
 def save_model(model, file_path):
     """
     Save the trained model to a file.
     
     Args:
-        model: Trained SKNN model.
+        model (keras model): Trained RNN model.
         file_path (str): Path to save the model.
     """
-    joblib.dump(model, file_path)
+    model.save(file_path)
     print(f"Model saved to {file_path}")
 
-# Main function to train and evaluate SKNN
+# Main function
 def main():
-    # Load CSV data (replace with the path to your CSV file)
-    file_path = 'emg_features_all_gestures.csv'  # Replace with the actual file path
-    X, y = load_csv_data(file_path)
+    # Load the dataset
+    file_path = 'emg_features_all_gestures.csv'
+    X, y = load_dataset(file_path)
     
-    # Split the data into training and testing sets (80% train, 20% test)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Preprocess the data
+    X_train, X_test, y_train, y_test = preprocess_data(X, y)
     
-    # Train the SKNN model
-    print("Training SKNN model...")
-    model = train_sknn(X_train, y_train)
+    # Build the RNN model
+    input_shape = (X_train.shape[1], X_train.shape[2])  # (timesteps, features)
+    num_classes = y_train.shape[1]  # Number of gesture classes
+    model = build_rnn_model(input_shape, num_classes)
+    
+    # Train the model
+    history = train_model(model, X_train, y_train, X_test, y_test, epochs=50, batch_size=32)
     
     # Evaluate the model
-    accuracy = evaluate_model(model, X_test, y_test)
-    print(f"Model Accuracy: {accuracy * 100:.2f}%")
+    evaluate_model(model, X_test, y_test)
+    
+    # Save the model
+    save_model(model, 'rnn_gesture_classifier.h5')
 
-    # Save the model locally
-    model_file_path = 'sknn_model_4_classes.pkl'  # Path to save the model
-    save_model(model, model_file_path)
-
-# Run the main function
 if __name__ == "__main__":
     main()
