@@ -2,80 +2,130 @@ from collections import Counter, deque
 import struct
 import sys
 import time
-
 import pygame
 from pygame.locals import *
 import numpy as np
 import keyboard  # For simulating key presses
-
 from pyomyo import Myo, emg_mode
+import math
+import queue
+import socket
+
+# Queue for sharing data between threads
+data_queue = queue.Queue()
+host, port = "127.0.0.1", 25001
+data = []
+TRANSMIT_MODE = False
 
 SUBSAMPLE = 3
 K = 15
 
-class Classifier(object):
-    '''A wrapper for nearest-neighbor classifier that stores
-    training data in vals0, ..., vals9.dat.'''
+def normalize_quaternion(q):
+    """Normalize a quaternion to unit length."""
+    w, x, y, z = q
+    norm = math.sqrt(w**2 + x**2 + y**2 + z**2)
+    if norm == 0:
+        return 1.0, 0.0, 0.0, 0.0  # Return a neutral quaternion to avoid division by zero
+    return w / norm, x / norm, y / norm, z / norm
 
-    def __init__(self, name="Classifier", color=(0,200,0)):
-        # Add some identifiers to the classifier to identify what model was used in different screenshots
+def euler_from_quaternion(w, x, y, z):
+    """Convert a quaternion into Euler angles (roll, pitch, yaw)."""
+    w, x, y, z = normalize_quaternion((w, x, y, z))
+
+    # Roll (x-axis rotation)
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + y * y)
+    roll_x = math.atan2(t0, t1)
+    roll_x = int((roll_x) * (180 / math.pi))
+
+    # Pitch (y-axis rotation)
+    t2 = +2.0 * (w * y - z * x)
+    t2 = +1.0 if t2 > +1.0 else t2
+    t2 = -1.0 if t2 < -1.0 else t2
+    pitch_y = math.asin(t2)
+    pitch_y = int((pitch_y) * (180 / math.pi))
+
+    # Yaw (z-axis rotation)
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (y * y + z * z)
+    yaw_z = math.atan2(t3, t4)
+    yaw_z = int((yaw_z) * (180 / math.pi))
+
+    return roll_x, pitch_y, yaw_z
+
+class Classifier:
+    """A wrapper for nearest-neighbor classifier that stores training data in vals0, ..., vals9.dat."""
+
+    def __init__(self, name="Classifier", color=(0, 200, 0)):
         self.name = name
         self.color = color
-
         for i in range(10):
-            with open('data/vals%d.dat' % i, 'ab') as f: pass
+            with open(f'data/vals{i}.dat', 'ab') as f:
+                pass
         self.read_data()
 
     def store_data(self, cls, vals):
-        with open('data/vals%d.dat' % cls, 'ab') as f:
-            f.write(pack('8H', *vals))
-
+        """Store EMG data for a specific class."""
+        with open(f'data/vals{cls}.dat', 'ab') as f:
+            f.write(struct.pack('<8H', *vals))
         self.train(np.vstack([self.X, vals]), np.hstack([self.Y, [cls]]))
 
     def read_data(self):
+        """Read training data from files."""
         X = []
         Y = []
         for i in range(10):
-            X.append(np.fromfile('data/vals%d.dat' % i, dtype=np.uint16).reshape((-1, 8)))
+            X.append(np.fromfile(f'data/vals{i}.dat', dtype=np.uint16).reshape((-1, 8)))
             Y.append(i + np.zeros(X[-1].shape[0]))
-
         self.train(np.vstack(X), np.hstack(Y))
 
     def delete_data(self):
+        """Delete all training data."""
         for i in range(10):
-            with open('data/vals%d.dat' % i, 'wb') as f: pass
+            with open(f'data/vals{i}.dat', 'wb') as f:
+                pass
         self.read_data()
 
     def train(self, X, Y):
+        """Train the classifier."""
         self.X = X
         self.Y = Y
         self.model = None
 
     def nearest(self, d):
+        """Find the nearest neighbor."""
         dists = ((self.X - d)**2).sum(1)
         ind = dists.argmin()
         return self.Y[ind]
 
     def classify(self, d):
-        if self.X.shape[0] < K * SUBSAMPLE: return 0
+        """Classify the input data."""
+        if self.X.shape[0] < K * SUBSAMPLE:
+            return 0
         return self.nearest(d)
 
 class MyoClassifier(Myo):
-    '''Adds higher-level pose classification and handling onto Myo.'''
+    """Adds higher-level pose classification and handling onto Myo."""
 
     def __init__(self, cls, tty=None, mode=emg_mode.PREPROCESSED, hist_len=25):
         Myo.__init__(self, tty, mode=mode)
-        # Add a classifier
         self.cls = cls
         self.hist_len = hist_len
         self.history = deque([0] * self.hist_len, self.hist_len)
         self.history_cnt = Counter(self.history)
+        self.euler_angles = [0.0, 0.0, 0.0]
+        self.add_imu_handler(self.on_imu)
         self.add_emg_handler(self.emg_handler)
         self.last_pose = None
         self.pose_handlers = []
-        self.last_key_press_time = 0  # Track the last time a key was pressed
+        self.last_key_press_time = 0
+
+    def on_imu(self, quat, acc, gyro):
+        """Handle IMU data and update Euler angles."""
+        self.euler_angles = euler_from_quaternion(quat[0], quat[1], quat[2], quat[3])
 
     def emg_handler(self, emg, moving):
+        """Handle EMG data and classify poses."""
         y = self.cls.classify(emg)
         self.history_cnt[self.history[0]] -= 1
         self.history_cnt[y] += 1
@@ -86,65 +136,47 @@ class MyoClassifier(Myo):
             self.on_raw_pose(r)
             self.last_pose = r
 
+    def get_euler_angles(self):
+        """Return the current Euler angles."""
+        return self.euler_angles
+
     def add_raw_pose_handler(self, h):
+        """Add a handler for raw pose events."""
         self.pose_handlers.append(h)
 
     def on_raw_pose(self, pose):
+        """Handle raw pose events."""
         for h in self.pose_handlers:
             h(pose)
 
         # Simulate key press based on the detected gesture
         current_time = time.time()
-        if current_time - self.last_key_press_time >= 0.4:  # Ensure key is pressed only once every 3 seconds
-            if pose == 0:
-                self.simulate_key_press('0')  # Press '0'
-            elif pose == 1:
-                self.simulate_key_press('1')  # Press '1'
-            elif pose == 2:
-                self.simulate_key_press('2')  # Press '2'
-            elif pose == 3:
-                self.simulate_key_press('3')  # Press '3'
-            elif pose == 4:
-                self.simulate_key_press('4')  # Press '4'
-            elif pose == 5:
-                self.simulate_key_press('5')  # Press '5'
-            elif pose == 6:
-                self.simulate_key_press('6')  # Press '6'
-            elif pose == 7:
-                self.simulate_key_press('7')  # Press '7'
-            elif pose == 8:
-                self.simulate_key_press('8')  # Press '8'
-            elif pose == 9:
-                self.simulate_key_press('9')  # Press '9'
-
-            self.last_key_press_time = current_time  # Update the last key press time
+        if current_time - self.last_key_press_time >= 0.4:  # Throttle key presses
+            if 0 <= pose <= 9:
+                self.simulate_key_press(str(int(pose)))  # Convert pose to integer and then to string
+            self.last_key_press_time = current_time
 
     def simulate_key_press(self, key):
-        # Simulate key press using the `keyboard` library
+        """Simulate a key press using the `keyboard` library."""
         keyboard.press(key)
-        time.sleep(0.1)  # Hold the key for a short duration
+        time.sleep(0.1)
         keyboard.release(key)
 
     def run_gui(self, hnd, scr, font, w, h):
-        # Handle keypresses
+        """Run the Pygame GUI."""
         for ev in pygame.event.get():
             if ev.type == QUIT or (ev.type == KEYDOWN and ev.unicode == 'q'):
                 raise KeyboardInterrupt()
             elif ev.type == KEYDOWN:
                 if K_0 <= ev.key <= K_9:
-                    # Labelling using row of numbers
                     hnd.recording = ev.key - K_0
-                elif K_KP0 <= ev.key <= K_KP9:
-                    # Labelling using Keypad
-                    hnd.recording = ev.key - K_Kp0
                 elif ev.unicode == 'r':
                     hnd.cl.read_data()
                 elif ev.unicode == 'e':
                     print("Pressed e, erasing local data")
                     self.cls.delete_data()
             elif ev.type == KEYUP:
-                if K_0 <= ev.key <= K_9 or K_KP0 <= ev.key <= K_KP9:
-                    # Don't record incoming data
+                if K_0 <= ev.key <= K_9:
                     hnd.recording = -1
 
         # Plotting
@@ -154,31 +186,22 @@ class MyoClassifier(Myo):
         for i in range(10):
             x = 0
             y = 0 + 30 * i
-            # Set the barplot color
-            clr = self.cls.color if i == r else (255,255,255)
+            clr = self.cls.color if i == r else (255, 255, 255)
 
-            txt = font.render('%5d' % (self.cls.Y == i).sum(), True, (255,255,255))
+            txt = font.render(f'{self.history_cnt[i]:5d}', True, (255, 255, 255))
             scr.blit(txt, (x + 20, y))
 
-            txt = font.render('%d' % i, True, clr)
+            txt = font.render(f'{i}', True, clr)
             scr.blit(txt, (x + 110, y))
 
-            # Plot the barchart plot
-            scr.fill((0,0,0), (x+130, y + txt.get_height() / 2 - 10, len(self.history) * 20, 20))
-            scr.fill(clr, (x+130, y + txt.get_height() / 2 - 10, self.history_cnt[i] * 20, 20))
+            scr.fill((0, 0, 0), (x + 130, y + txt.get_height() / 2 - 10, len(self.history) * 20, 20))
+            scr.fill(clr, (x + 130, y + txt.get_height() / 2 - 10, self.history_cnt[i] * 20, 20))
 
         pygame.display.flip()
 
-def pack(fmt, *args):
-    return struct.pack('<' + fmt, *args)
+class EMGHandler:
+    """Handle EMG data and store it for training."""
 
-def unpack(fmt, *args):
-    return struct.unpack('<' + fmt, *args)
-
-def text(scr, font, txt, pos, clr=(255,255,255)):
-    scr.blit(font.render(txt, True, clr), pos)
-
-class EMGHandler(object):
     def __init__(self, m):
         self.recording = -1
         self.m = m
@@ -189,56 +212,58 @@ class EMGHandler(object):
         if self.recording >= 0:
             self.m.cls.store_data(self.recording, emg)
 
-class Live_Classifier(Classifier):
-    '''
-    General class for all Sklearn classifiers
-    Expects something you can call .fit and .predict on
-    '''
-    def __init__(self, classifier, name="Live Classifier", color=(0,55,175)):
-        self.model = classifier
-        Classifier.__init__(self, name=name, color=color)
-
-    def train(self, X, Y):
-        self.X = X
-        self.Y = Y
-
-        if self.X.shape[0] > 0 and self.Y.shape[0] > 0: 
-            self.model.fit(self.X, self.Y)
-
-    def classify(self, emg):
-        if self.X.shape[0] == 0 or self.model == None:
-            # We have no data or model, return 0
-            return 0
-
-        x = np.array(emg).reshape(1,-1)
-        pred = self.model.predict(x)
-        return int(pred[0])
-
 if __name__ == '__main__':
     pygame.init()
     w, h = 800, 320
     scr = pygame.display.set_mode((w, h))
     font = pygame.font.Font(None, 30)
-
+    yaw, pitch, roll = 1.0, 2.0, 3.0
+    control_value = 1
+    yaw_zero = 0
+    pitch_zero = 0
+    roll_zero = 0
     m = MyoClassifier(Classifier())
     hnd = EMGHandler(m)
     m.add_emg_handler(hnd)
     m.connect()
 
     m.add_raw_pose_handler(print)
-
-    # Set Myo LED color to model color
     m.set_leds(m.cls.color, m.cls.color)
-    # Set pygame window name
     pygame.display.set_caption(m.cls.name)
+
     try:
+        if TRANSMIT_MODE:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((host, port))
+        else:
+            print("Test mode on")
+
         while True:
+            euler_angles = m.get_euler_angles()
+            if None not in euler_angles:
+                roll, pitch, yaw = euler_angles
+                if keyboard.is_pressed('space'):
+                    yaw_zero = yaw
+                    pitch_zero = pitch
+                    roll_zero = roll
+
+                yaw -= yaw_zero
+                pitch -= pitch_zero
+                roll -= roll_zero
+
+                data = f"{roll},{yaw * (-1)},{pitch}"
+                print(data)
+
             m.run()
             m.run_gui(hnd, scr, font, w, h)
+
+            if TRANSMIT_MODE:
+                sock.sendall(data.encode("utf-8"))
+                response = sock.recv(1024).decode("utf-8")
+                print(response)
 
     except KeyboardInterrupt:
         pass
     finally:
         m.disconnect()
-        print()
         pygame.quit()
