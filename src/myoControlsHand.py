@@ -10,6 +10,7 @@ from pyomyo import Myo, emg_mode
 import math
 import queue
 import socket
+# import serial  # For serial communication with Arduino
 
 # Queue for sharing data between threads
 data_queue = queue.Queue()
@@ -19,6 +20,11 @@ TRANSMIT_MODE = True
 
 SUBSAMPLE = 3
 K = 15
+
+# Serial communication setup
+# SERIAL_PORT = 'COM57'  # Change this to the correct serial port for your Arduino
+# BAUD_RATE = 9600
+# ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)  # Initialize serial connection
 
 def normalize_quaternion(q):
     """Normalize a quaternion to unit length."""
@@ -177,6 +183,7 @@ class EMGHandler:
         self.emg = emg
         if self.recording >= 0:
             self.m.cls.store_data(self.recording, emg)
+
     def get_emg(self):
         return self.emg
 
@@ -194,7 +201,7 @@ if __name__ == '__main__':
     hnd = EMGHandler(m)
     m.add_emg_handler(hnd)
     m.connect()
-    
+
     m.add_raw_pose_handler(print)
     m.set_leds(m.cls.color, m.cls.color)
     # pygame.display.set_caption(m.cls.name)
@@ -223,7 +230,14 @@ if __name__ == '__main__':
                 data = f"{roll},{yaw * (-1)},{pitch}"
                 print(data)
                 print(emg_data)
-                # todo plot using pygame
+
+                # if len(emg_data) == 8:  # Ensure there are exactly 8 values
+                #     emg_str = ','.join(map(str, emg_data))  # Convert EMG data to a comma-separated string
+                #     ser.write((emg_str + '\n').encode())  # Send the string with a newline character
+                #     print(f"Sent to Arduino: {emg_str}")
+                #     time.sleep(0.05)  # Add a small delay (100 ms)
+                # else:
+                #     print("Invalid EMG data length")
 
             m.run()
             # m.run_gui(hnd, scr, font, w, h)
@@ -237,4 +251,5 @@ if __name__ == '__main__':
         pass
     finally:
         m.disconnect()
+        # ser.close()  # Close the serial connection
         # pygame.quit()
