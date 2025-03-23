@@ -1,20 +1,22 @@
-import numpy as np
-import pandas as pd
-from pyomyo import Myo, emg_mode
 import multiprocessing
 import time
-import sys
-import threading
-from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-import joblib  # Para carregar o modelo salvo
+import numpy as np
+from scipy.signal import hilbert  # For Hilbert transform
+from pyomyo import Myo, emg_mode
+import joblib  # For loading the trained model
+
+# Constants
+WINDOW_SIZE = 100  # 100 ms window
+OVERLAP = 50       # 50% overlap
+SAMPLE_RATE = 200  # Assuming 200 Hz sample rate (adjust based on your data)
 
 # ------------ Myo Setup ---------------
 q = multiprocessing.Queue()
 
 def worker(q):
+    """
+    Worker function to read EMG data from the Myo armband.
+    """
     m = Myo(mode=emg_mode.RAW)
     m.connect()
     
@@ -38,97 +40,108 @@ def worker(q):
         m.run()
     print("Worker Stopped")
 
-# Função para extrair características de uma janela de dados
+def normalize_emg_data(emg_data):
+    """
+    Normalize raw EMG data to the range [-1, 1].
+    
+    Args:
+        emg_data (list of lists): Raw EMG data, where each sublist contains 8 EMG values.
+    
+    Returns:
+        list of lists: Normalized EMG data.
+    """
+    normalized_data = []
+    for emg_sample in emg_data:
+        normalized_sample = [value / 128.0 for value in emg_sample]
+        normalized_data.append(normalized_sample)
+    return normalized_data
+
+# Feature extraction functions
+def enhanced_wavelength(data):
+    L = len(data)
+    p = 0.75 if 0.25 * L <= 0.8 * L else 0.25
+    return (1 / L) * np.sum(np.abs(np.diff(data)) ** p)
+
+def root_mean_square(data):
+    return np.sqrt(np.mean(np.square(data)))
+
+def modified_mean_absolute_value_2(data):
+    L = len(data)
+    wi = np.where((0.25 * L <= np.arange(L)) & (np.arange(L) <= 0.75 * L), 1 / (4 * L), 4 * (L - np.arange(L)) / L)
+    return np.mean(wi * np.abs(data))
+
+def difference_absolute_standard_deviation_value(data):
+    return np.sqrt(np.mean(np.square(np.diff(data))))
+
+def maximum_fractal_length(data):
+    return np.log10(np.sum(np.square(np.diff(data))))
+
+# Function to extract features from a window
 def extract_features(window):
-    features = {}
-    
-    # Características no domínio do tempo
-    features['mean'] = np.mean(window, axis=0)  # 8 características (1 por canal)
-    features['var'] = np.var(window, axis=0)  # 8 características (1 por canal)
-    features['rms'] = np.sqrt(np.mean(window**2, axis=0))  # 8 características (1 por canal)
-    features['zcr'] = np.array([np.sum(np.abs(np.diff(np.sign(window[:, i])))) / len(window) for i in range(window.shape[1])])  # 8 características (1 por canal)
-    features['wl'] = np.array([np.sum(np.abs(np.diff(window[:, i]))) for i in range(window.shape[1])])  # 8 características (1 por canal)
-    
-    # Transformada de Fourier (FFT)
-    fft_vals = np.fft.fft(window, axis=0)
-    power_spectrum = np.abs(fft_vals)**2
-    freqs = np.fft.fftfreq(len(window))
-    
-    # Calcula a frequência média para cada canal
-    mean_freq = np.zeros(window.shape[1])  # Array para armazenar a frequência média de cada canal
-    for i in range(window.shape[1]):  # Itera sobre cada canal
-        mean_freq[i] = np.sum(freqs * power_spectrum[:, i]) / np.sum(power_spectrum[:, i])
-    features['mean_freq'] = mean_freq  # 8 características (1 por canal)
-    
-    # Retorna as características como um array 1D
-    return np.concatenate([features['mean'], features['var'], features['rms'], features['zcr'], features['wl'], features['mean_freq']])
+    """
+    Extract 5 features from a window of EMG data.
+    """
+    features = []
+    for channel in range(8):  # 8 channels in Myo Armband
+        channel_data = window[:, channel]
+        features.extend([
+            enhanced_wavelength(channel_data),
+            root_mean_square(channel_data),
+            modified_mean_absolute_value_2(channel_data),
+            difference_absolute_standard_deviation_value(channel_data),
+            maximum_fractal_length(channel_data)
+        ])
+    return features[:5]  # Only use the first 5 features
 
-# Função para verificar a entrada do usuário
-def check_user_input(stop_event):
-    while not stop_event.is_set():
-        user_input = input()  # Aguarda o usuário pressionar Enter
-        if user_input.strip().lower() == 's':
-            stop_event.set()  # Sinaliza para parar a coleta
+# Function to run the trained SKNN model in real-time
+def run_sknn_model(model_path):
+    """
+    Run the trained SKNN model in real-time using Myo Armband data.
+    
+    Args:
+        model_path (str): Path to the trained SKNN model (.pkl file).
+    """
+    # Load the trained model
+    model = joblib.load(model_path)
+    print("Model loaded successfully!")
 
-# -------- Main Program Loop -----------
-if __name__ == "__main__":
-    # Carrega o modelo treinado
-    pipeline = joblib.load('emg_model.pkl')  # Substitua pelo caminho do seu modelo salvo
-
+    # Initialize Myo Armband
     p = multiprocessing.Process(target=worker, args=(q,))
     p.start()
 
-    # Parâmetros da janela
-    window_size = 40  # 200 ms a 200 Hz
-    emg_buffer = []
-
-    # Dicionário de gestos (apenas 3 gestos)
-    gestures = {
-        0: "Abrir",
-        1: "Fechar",
-        2: "Relaxar",
-    }
-
     try:
-        print("Bem-vindo ao classificador de gestos em tempo real!")
-        print("Pressione 's' e Enter para parar.")
+        emg_buffer = []  # Buffer to store EMG data
+        print("Waiting for Myo Armband to start streaming data...")
 
-        # Evento para sinalizar a parada da coleta
-        stop_event = threading.Event()
+        # Wait until the Myo Armband starts streaming data
+        while q.empty():
+            time.sleep(0.1)  # Wait for 100 ms before checking again
 
-        # Thread para verificar a entrada do usuário
-        input_thread = threading.Thread(target=check_user_input, args=(stop_event,))
-        input_thread.start()
+        print("Myo Armband is ready. Running real-time gesture classification... Press Ctrl+C to stop.")
 
-        # Loop de coleta de dados e classificação
-        while not stop_event.is_set():
-            # Obtém os dados EMG e processa
-            while not q.empty():
-                emg = list(q.get())
-                emg_buffer.append(emg)
+        while True:
+            if not q.empty():
+                emg = q.get()
+                emg_normalized = normalize_emg_data([emg])[0]  # Normalize the EMG data
+                emg_buffer.append(emg_normalized)
 
-                # Quando a janela atingir o tamanho desejado (200 ms)
-                if len(emg_buffer) >= window_size:
-                    # Converte para um array numpy
-                    window = np.array(emg_buffer[-window_size:])
-
-                    # Extrai características
-                    features = extract_features(window)
-
-                    # Faz a previsão usando o modelo
-                    gesture_id = pipeline.predict([features])[0]
-                    gesture_name = gestures.get(gesture_id, "Desconhecido")
-
-                    # Exibe o gesto classificado
-                    print(f"Gesto classificado: {gesture_name}")
-
-                    # Limpa o buffer para a próxima janela
-                    emg_buffer.clear()
+                # When the buffer has enough data for a window
+                if len(emg_buffer) >= WINDOW_SIZE:
+                    window = np.array(emg_buffer[-WINDOW_SIZE:])  # Use the latest window
+                    features = extract_features(window)  # Extract features
+                    gesture = model.predict([features])  # Predict the gesture
+                    print(f"Predicted Gesture: {gesture[0]}")
 
     except KeyboardInterrupt:
-        print("Classificação concluída.")
-
+        print("Stopping real-time classification...")
     finally:
-        p.terminate()  # Encerra o processo do Myo
-        p.join()  # Aguarda o processo terminar
-        print("Programa encerrado.")
+        p.terminate()
+        p.join()
+
+# Run the real-time classification
+if __name__ == "__main__":
+    # Path to the trained SKNN model
+    model_path = 'sknn_model_4_classes.pkl'  # Replace with the actual path to your model
+
+    # Run the SKNN model in real-time
+    run_sknn_model(model_path)

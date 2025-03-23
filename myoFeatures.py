@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.signal import hilbert  # For Hilbert transform
 from pyomyo import Myo, emg_mode
+import os  # To check if the CSV file exists
 
 # Constants
 WINDOW_SIZE = 100  # 100 ms window
@@ -247,11 +248,24 @@ def record_emg_data(gesture_type, duration=5):
     start_time = time.time()
     
     print(f"Recording Gesture Type {gesture_type} for {duration} seconds...")
+    window_counter = 0  # Counter to track the number of windows processed
+
+    # Clear the queue to discard any old data
+    while not q.empty():
+        q.get()
+
     while time.time() - start_time < duration:
         if not q.empty():
             emg = list(q.get())
             emg_data.append(emg)
             print(emg)
+
+            # Discard the first 2 windows
+            if len(emg_data) >= WINDOW_SIZE:
+                window_counter += 1
+                if window_counter <= 2:
+                    emg_data = emg_data[WINDOW_SIZE - OVERLAP:]  # Discard the first window
+                    continue  # Skip processing for the first 2 windows
     
     # Normalize the EMG data
     normalized_emg_data = normalize_emg_data(emg_data)
@@ -264,7 +278,7 @@ def record_emg_data(gesture_type, duration=5):
         envelopes.append(envelope)
     
     # Evaluate the threshold (using the first channel's envelope)
-    threshold = 0.05  # Fixed threshold (adjust as needed)
+    threshold = 0.08  # Fixed threshold (adjust as needed)
     
     # Detect gesture intervals
     gesture_intervals = detect_gesture_intervals(envelopes[0], threshold)
@@ -288,26 +302,32 @@ def record_emg_data(gesture_type, duration=5):
         for channel_features in features:
             feature_data.append(channel_features + [label])  # Append label to features
 
-    # Convert to DataFrame and save to CSV
+    # Convert to DataFrame
     columns = ['EWL', 'RMS', 'MMAV2', 'DASDV', 'MFL', 'Label']
     df = pd.DataFrame(feature_data, columns=columns)
-    df.to_csv(f'emg_features_gesture_{gesture_type}.csv', index=False)
 
-    print(f"Features extracted and saved to 'emg_features_gesture_{gesture_type}.csv'")
+    # Save or append to CSV
+    csv_file = 'emg_features_all_gestures.csv'
+    if os.path.exists(csv_file):
+        # Append to existing CSV
+        df.to_csv(csv_file, mode='a', header=False, index=False)
+        print(f"Features appended to '{csv_file}'")
+    else:
+        # Create new CSV
+        df.to_csv(csv_file, index=False)
+        print(f"Features saved to '{csv_file}'")
 
 def main_menu():
     """
     Display a menu for the user to select a gesture type to record.
     """
     print("Select a gesture type to record:")
-    print("1. Gesture Type 1")
-    print("2. Gesture Type 2")
-    print("3. Gesture Type 3")
-    print("4. Gesture Type 4")
-    print("5. Gesture Type 5")
+    print("1. Gesture Close Hand")
+    print("2. Gesture Open Hand")
+    print("3. Gesture Pointing")
     
-    choice = input("Enter your choice (1-5): ")
-    if choice in ['1', '2', '3', '4', '5']:
+    choice = input("Enter your choice (1-3): ")
+    if choice in ['1', '2', '3']:
         record_emg_data(choice)
     else:
         print("Invalid choice. Please try again.")
