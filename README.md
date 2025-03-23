@@ -3,6 +3,8 @@
 ## Overview
 MyoClassifier is a machine learning project designed to classify electromyography (EMG) signals. The project leverages various algorithms and techniques to accurately identify different types of muscle movements based on the EMG data.
 
+![Demo Image](demoimage.jpeg)
+
 ## Project Structure
 The project is organized into the following directories and files:
 
@@ -13,7 +15,7 @@ The project is organized into the following directories and files:
   - **feature_extraction/**: Scripts for extracting features from the EMG signals.
   - **models/**: Implementation of various machine learning models used for classification.
   - **utils/**: Utility functions and helper scripts.
-  - **examples/**: Example scripts and notebooks adapted from the `pyomyo` repository to demonstrate usage and integration.
+  - **examples/**: Example scripts and notebooks adapted from the [`pyomyo`](https://github.com/akshaybahadur21/pyomyo) repository to demonstrate usage and integration.
 - **tests/**: Unit tests for the project's codebase.
 - **README.md**: Project documentation and overview.
 
@@ -41,6 +43,10 @@ To get started with the MyoClassifier project, follow these steps:
 
 ## Usage
 The main scripts for data processing, feature extraction, and model training can be found in the `src/` directory. You can run these scripts individually or integrate them into your own workflow.
+
+## Unity Project
+You can download the Unity project from the following link:
+[Unity Project Download](https://drive.google.com/file/d/11xFDDMwNdO0Dge3Cj2RfmiCvqYhKNMiJ/view?usp=sharing)
 
 ## Contributing
 Contributions are welcome! Please feel free to submit a pull request or open an issue if you have any suggestions or improvements.
