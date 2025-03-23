@@ -177,6 +177,8 @@ class EMGHandler:
         self.emg = emg
         if self.recording >= 0:
             self.m.cls.store_data(self.recording, emg)
+    def get_emg(self):
+        return self.emg
 
 if __name__ == '__main__':
     # pygame.init()
@@ -192,7 +194,7 @@ if __name__ == '__main__':
     hnd = EMGHandler(m)
     m.add_emg_handler(hnd)
     m.connect()
-
+    
     m.add_raw_pose_handler(print)
     m.set_leds(m.cls.color, m.cls.color)
     # pygame.display.set_caption(m.cls.name)
@@ -206,6 +208,7 @@ if __name__ == '__main__':
 
         while True:
             euler_angles = m.get_euler_angles()
+            emg_data = hnd.get_emg()
             if None not in euler_angles:
                 roll, pitch, yaw = euler_angles
                 if keyboard.is_pressed('space'):
@@ -219,6 +222,8 @@ if __name__ == '__main__':
 
                 data = f"{roll},{yaw * (-1)},{pitch}"
                 print(data)
+                print(emg_data)
+                # todo plot using pygame
 
             m.run()
             # m.run_gui(hnd, scr, font, w, h)
