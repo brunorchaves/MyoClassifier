@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.signal import hilbert  # For Hilbert transform
+from scipy.signal import hilbert, butter, filtfilt, iirnotch  # For filtering and Hilbert transform
 from pyomyo import Myo, emg_mode
 import os  # To check if the CSV file exists
 
@@ -58,6 +58,116 @@ def normalize_emg_data(emg_data):
         normalized_data.append(normalized_sample)
     return normalized_data
 
+# Function to design a Butterworth bandpass filter
+def butter_bandpass(lowcut, highcut, fs, order=2):
+    """
+    Design a Butterworth bandpass filter.
+    
+    Args:
+        lowcut (float): Lower cutoff frequency.
+        highcut (float): Upper cutoff frequency.
+        fs (float): Sampling frequency.
+        order (int): Filter order.
+    
+    Returns:
+        b, a (numpy arrays): Numerator and denominator polynomials of the filter.
+    """
+    nyquist = 0.5 * fs
+    low = lowcut / nyquist
+    high = highcut / nyquist
+    
+    # Ensure the cutoff frequencies are within the valid range (0, 1)
+    if low <= 0 or high >= 1:
+        raise ValueError("Cutoff frequencies must be within the range (0, Nyquist).")
+    
+    b, a = butter(order, [low, high], btype='band')
+    return b, a
+
+# Function to apply a bandpass filter
+def bandpass_filter(data, lowcut, highcut, fs, order=4):
+    """
+    Apply a Butterworth bandpass filter to the data.
+    
+    Args:
+        data (numpy array): Input data to filter.
+        lowcut (float): Lower cutoff frequency.
+        highcut (float): Upper cutoff frequency.
+        fs (float): Sampling frequency.
+        order (int): Filter order.
+    
+    Returns:
+        y (numpy array): Filtered data.
+    """
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
+    y = filtfilt(b, a, data)
+    return y
+
+# Function to design a notch filter
+def notch_filter(f0, Q, fs):
+    """
+    Design a notch filter to remove a specific frequency.
+    
+    Args:
+        f0 (float): Frequency to remove (e.g., 50 Hz for power line interference).
+        Q (float): Quality factor.
+        fs (float): Sampling frequency.
+    
+    Returns:
+        b, a (numpy arrays): Numerator and denominator polynomials of the filter.
+    """
+    nyquist = 0.5 * fs
+    freq = f0 / nyquist
+    b, a = iirnotch(freq, Q)
+    return b, a
+
+# Function to apply a notch filter
+def apply_notch_filter(data, f0, Q, fs):
+    """
+    Apply a notch filter to the data.
+    
+    Args:
+        data (numpy array): Input data to filter.
+        f0 (float): Frequency to remove.
+        Q (float): Quality factor.
+        fs (float): Sampling frequency.
+    
+    Returns:
+        y (numpy array): Filtered data.
+    """
+    b, a = notch_filter(f0, Q, fs)
+    y = filtfilt(b, a, data)
+    return y
+
+# Function to filter the normalized EMG data
+def filter_emg_data(normalized_emg_data, fs=200):
+    """
+    Apply a 50 Hz notch filter and a 10-100 Hz bandpass filter to the normalized EMG data.
+    
+    Args:
+        normalized_emg_data (list of lists): Normalized EMG data.
+        fs (float): Sampling frequency.
+    
+    Returns:
+        filtered_emg_data (list of lists): Filtered EMG data.
+    """
+    filtered_emg_data = []
+    for channel in range(8):  # Loop through all 8 channels
+        # Extract data for the current channel
+        channel_data = np.array([sample[channel] for sample in normalized_emg_data])
+        
+        # Apply a 50 Hz notch filter
+        notch_filtered_data = apply_notch_filter(channel_data, f0=50, Q=30, fs=fs)
+        
+        # Apply a 10-100 Hz bandpass filter
+        bandpass_filtered_data = bandpass_filter(notch_filtered_data, lowcut=10, highcut=99, fs=fs)
+        
+        # Append the filtered data to the list
+        filtered_emg_data.append(bandpass_filtered_data)
+    
+    # Transpose the list to match the original format (samples x channels)
+    filtered_emg_data = np.array(filtered_emg_data).T.tolist()
+    return filtered_emg_data
+
 def calculate_smooth_envelope(emg_signal, window_size=10):
     """
     Calculate a smooth envelope of the EMG signal using the Hilbert transform and a moving average filter.
@@ -75,15 +185,21 @@ def calculate_smooth_envelope(emg_signal, window_size=10):
     smoothed_envelope = np.convolve(envelope, np.ones(window_size) / window_size, mode='same')
     return smoothed_envelope
 
-def detect_gesture_intervals(envelope, threshold):
+def detect_gesture_intervals(envelope, threshold_multiplier=1.5):
     """
-    Detect the start and end of gesture intervals based on the envelope and threshold.
+    Detect the start and end of gesture intervals based on the envelope and an adaptive threshold.
+    
     Args:
         envelope (numpy array): Smoothed envelope of the EMG signal.
-        threshold (float): Threshold value.
+        threshold_multiplier (float): Multiplier for the mean envelope value to calculate the threshold.
+    
     Returns:
-        list of tuples: List of (start, end) indices for gesture intervals.
+        gesture_intervals (list of tuples): List of (start, end) indices for gesture intervals.
+        threshold (float): Calculated threshold value.
     """
+    # Calculate the threshold as a multiple of the mean envelope value
+    threshold = threshold_multiplier * np.mean(envelope)
+    
     gesture_intervals = []
     in_gesture = False
     start = 0
@@ -96,7 +212,7 @@ def detect_gesture_intervals(envelope, threshold):
             in_gesture = False
             gesture_intervals.append((start, i))
     
-    return gesture_intervals
+    return gesture_intervals, threshold
 
 def plot_emg_signals_with_gestures(emg_data, gesture_intervals, threshold):
     """
@@ -169,6 +285,9 @@ def plot_envelopes_with_thresholds(envelopes, gesture_intervals, threshold):
 
 # Feature extraction functions
 def enhanced_wavelength(data):
+    """
+    Calculate the Enhanced Wavelength (EWL) feature.
+    """
     L = len(data)
     p = 0.75 if 0.25 * L <= 0.8 * L else 0.25
     return (1 / L) * np.sum(np.abs(np.diff(data)) ** p)
@@ -280,30 +399,30 @@ def record_emg_data(gesture_type, duration=5):
     # Normalize the EMG data
     normalized_emg_data = normalize_emg_data(emg_data)
     
+    # Filter the normalized EMG data - 50 Hz notch and 10-100 Hz bandpass
+    filtered_emg_data = filter_emg_data(normalized_emg_data, fs=SAMPLE_RATE)
+    
     # Calculate the smooth envelope for all 8 channels
     envelopes = []
     for channel in range(8):  # Loop through all 8 channels
-        channel_data = [sample[channel] for sample in normalized_emg_data]
+        channel_data = [sample[channel] for sample in filtered_emg_data]
         envelope = calculate_smooth_envelope(channel_data, window_size=20)  # Larger window for smoother envelope
         envelopes.append(envelope)
     
     # Evaluate the threshold (using the first channel's envelope)
-    threshold = 0.08  # Fixed threshold (adjust as needed)
-    
-    # Detect gesture intervals
-    gesture_intervals = detect_gesture_intervals(envelopes[0], threshold)
+    gesture_intervals, threshold = detect_gesture_intervals(envelopes[0], threshold_multiplier=1.5)
     
     # Plot the EMG signals with highlighted gesture intervals
-    plot_emg_signals_with_gestures(normalized_emg_data, gesture_intervals, threshold)
+    plot_emg_signals_with_gestures(filtered_emg_data, gesture_intervals, threshold)
     
     # Plot the smoothed envelopes with thresholds and highlighted gesture intervals
     plot_envelopes_with_thresholds(envelopes, gesture_intervals, threshold)
 
     # Create labels for the recorded data (gesture_type is the label for gesture regions)
-    labels = [gesture_type] * len(normalized_emg_data)
+    labels = [gesture_type] * len(filtered_emg_data)
 
     # Create windows and labels
-    windowed_data, window_labels = create_windows_and_labels(np.array(normalized_emg_data), labels, gesture_intervals)
+    windowed_data, window_labels = create_windows_and_labels(np.array(filtered_emg_data), labels, gesture_intervals)
 
     # Extract features for each window
     feature_data = []
