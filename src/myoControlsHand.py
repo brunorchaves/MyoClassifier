@@ -1,3 +1,5 @@
+# === Arquivo principal: main.py ===
+
 from collections import Counter, deque
 import struct
 import sys
@@ -5,116 +7,81 @@ import time
 import pygame
 from pygame.locals import *
 import numpy as np
-import keyboard  # For simulating key presses
+import keyboard
 from pyomyo import Myo, emg_mode
 import math
 import queue
 import socket
-# import serial  # For serial communication with Arduino
+import multiprocessing
+from plot_emgs import plot_worker
 
-# Queue for sharing data between threads
-data_queue = queue.Queue()
+# Queue for sharing data with the plotter
+plot_queue = multiprocessing.Queue()
+
+# Constantes
 host, port = "127.0.0.1", 25001
-data = []
 TRANSMIT_MODE = True
-
+PLOT_MODE = True
 SUBSAMPLE = 3
 K = 15
 
-# Serial communication setup
-# SERIAL_PORT = 'COM57'  # Change this to the correct serial port for your Arduino
-# BAUD_RATE = 9600
-# ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)  # Initialize serial connection
-
 def normalize_quaternion(q):
-    """Normalize a quaternion to unit length."""
     w, x, y, z = q
     norm = math.sqrt(w**2 + x**2 + y**2 + z**2)
-    if norm == 0:
-        return 1.0, 0.0, 0.0, 0.0  # Return a neutral quaternion to avoid division by zero
-    return w / norm, x / norm, y / norm, z / norm
+    return (w / norm, x / norm, y / norm, z / norm) if norm else (1.0, 0.0, 0.0, 0.0)
 
 def euler_from_quaternion(w, x, y, z):
-    """Convert a quaternion into Euler angles (roll, pitch, yaw)."""
     w, x, y, z = normalize_quaternion((w, x, y, z))
-
-    # Roll (x-axis rotation)
     t0 = +2.0 * (w * x + y * z)
     t1 = +1.0 - 2.0 * (x * x + y * y)
-    roll_x = math.atan2(t0, t1)
-    roll_x = int((roll_x) * (180 / math.pi))
-
-    # Pitch (y-axis rotation)
-    t2 = +2.0 * (w * y - z * x)
-    t2 = +1.0 if t2 > +1.0 else t2
-    t2 = -1.0 if t2 < -1.0 else t2
-    pitch_y = math.asin(t2)
-    pitch_y = int((pitch_y) * (180 / math.pi))
-
-    # Yaw (z-axis rotation)
+    roll_x = int(math.atan2(t0, t1) * 180 / math.pi)
+    t2 = max(-1.0, min(+1.0, +2.0 * (w * y - z * x)))
+    pitch_y = int(math.asin(t2) * 180 / math.pi)
     t3 = +2.0 * (w * z + x * y)
     t4 = +1.0 - 2.0 * (y * y + z * z)
-    yaw_z = math.atan2(t3, t4)
-    yaw_z = int((yaw_z) * (180 / math.pi))
-
+    yaw_z = int(math.atan2(t3, t4) * 180 / math.pi)
     return roll_x, pitch_y, yaw_z
 
 class Classifier:
-    """A wrapper for nearest-neighbor classifier that stores training data in vals0, ..., vals9.dat."""
-
     def __init__(self, name="Classifier", color=(0, 200, 0)):
         self.name = name
         self.color = color
         for i in range(10):
-            with open(f'data/vals{i}.dat', 'ab') as f:
-                pass
+            open(f'data/vals{i}.dat', 'ab').close()
         self.read_data()
 
     def store_data(self, cls, vals):
-        """Store EMG data for a specific class."""
         with open(f'data/vals{cls}.dat', 'ab') as f:
             f.write(struct.pack('<8H', *vals))
         self.train(np.vstack([self.X, vals]), np.hstack([self.Y, [cls]]))
 
     def read_data(self):
-        """Read training data from files."""
-        X = []
-        Y = []
+        X, Y = [], []
         for i in range(10):
-            X.append(np.fromfile(f'data/vals{i}.dat', dtype=np.uint16).reshape((-1, 8)))
-            Y.append(i + np.zeros(X[-1].shape[0]))
+            Xi = np.fromfile(f'data/vals{i}.dat', dtype=np.uint16).reshape((-1, 8))
+            Yi = i + np.zeros(Xi.shape[0])
+            X.append(Xi)
+            Y.append(Yi)
         self.train(np.vstack(X), np.hstack(Y))
 
     def delete_data(self):
-        """Delete all training data."""
         for i in range(10):
-            with open(f'data/vals{i}.dat', 'wb') as f:
-                pass
+            open(f'data/vals{i}.dat', 'wb').close()
         self.read_data()
 
     def train(self, X, Y):
-        """Train the classifier."""
-        self.X = X
-        self.Y = Y
-        self.model = None
+        self.X, self.Y = X, Y
 
     def nearest(self, d):
-        """Find the nearest neighbor."""
         dists = ((self.X - d)**2).sum(1)
-        ind = dists.argmin()
-        return self.Y[ind]
+        return self.Y[dists.argmin()]
 
     def classify(self, d):
-        """Classify the input data."""
-        if self.X.shape[0] < K * SUBSAMPLE:
-            return 0
-        return self.nearest(d)
+        return 0 if self.X.shape[0] < K * SUBSAMPLE else self.nearest(d)
 
 class MyoClassifier(Myo):
-    """Adds higher-level pose classification and handling onto Myo."""
-
     def __init__(self, cls, tty=None, mode=emg_mode.PREPROCESSED, hist_len=25):
-        Myo.__init__(self, tty, mode=mode)
+        super().__init__(tty, mode=mode)
         self.cls = cls
         self.hist_len = hist_len
         self.history = deque([0] * self.hist_len, self.hist_len)
@@ -127,11 +94,9 @@ class MyoClassifier(Myo):
         self.last_key_press_time = 0
 
     def on_imu(self, quat, acc, gyro):
-        """Handle IMU data and update Euler angles."""
-        self.euler_angles = euler_from_quaternion(quat[0], quat[1], quat[2], quat[3])
+        self.euler_angles = euler_from_quaternion(*quat)
 
     def emg_handler(self, emg, moving):
-        """Handle EMG data and classify poses."""
         y = self.cls.classify(emg)
         self.history_cnt[self.history[0]] -= 1
         self.history_cnt[y] += 1
@@ -143,107 +108,83 @@ class MyoClassifier(Myo):
             self.last_pose = r
 
     def get_euler_angles(self):
-        """Return the current Euler angles."""
         return self.euler_angles
 
     def add_raw_pose_handler(self, h):
-        """Add a handler for raw pose events."""
         self.pose_handlers.append(h)
 
     def on_raw_pose(self, pose):
-        """Handle raw pose events."""
         for h in self.pose_handlers:
             h(pose)
-
-        # Simulate key press based on the detected gesture
-        current_time = time.time()
-        if current_time - self.last_key_press_time >= 0.4:  # Throttle key presses
+        now = time.time()
+        if now - self.last_key_press_time >= 0.4:
             if 0 <= pose <= 9:
-                self.simulate_key_press(str(int(pose)))  # Convert pose to integer and then to string
-            self.last_key_press_time = current_time
-
-    def simulate_key_press(self, key):
-        """Simulate a key press using the `keyboard` library."""
-        keyboard.press(key)
-        time.sleep(0.1)
-        keyboard.release(key)
-
-    def run_gui(self, hnd, scr, font, w, h):
-        a = 1
+                keyboard.press(str(int(pose)))
+                time.sleep(0.1)
+                keyboard.release(str(int(pose)))
+            self.last_key_press_time = now
 
 class EMGHandler:
-    """Handle EMG data and store it for training."""
-
-    def __init__(self, m):
+    def __init__(self, m, plot_queue=None):
         self.recording = -1
         self.m = m
         self.emg = (0,) * 8
+        self.plot_queue = plot_queue
 
     def __call__(self, emg, moving):
         self.emg = emg
         if self.recording >= 0:
             self.m.cls.store_data(self.recording, emg)
+        if self.plot_queue:
+            self.plot_queue.put(emg)
 
     def get_emg(self):
         return self.emg
 
 if __name__ == '__main__':
-    # pygame.init()
-    w, h = 800, 320
-    # scr = pygame.display.set_mode((w, h))
-    # font = pygame.font.Font(None, 30)
-    yaw, pitch, roll = 1.0, 2.0, 3.0
-    control_value = 1
-    yaw_zero = 0
-    pitch_zero = 0
-    roll_zero = 0
+    plot_process = None
+    plot_queue = None
+
+    if PLOT_MODE:
+        plot_queue = multiprocessing.Queue()
+        plot_process = multiprocessing.Process(target=plot_worker, args=(plot_queue,))
+        plot_process.start()
+
     m = MyoClassifier(Classifier())
-    hnd = EMGHandler(m)
+    hnd = EMGHandler(m, plot_queue=plot_queue if PLOT_MODE else None)
     m.add_emg_handler(hnd)
     m.connect()
-
     m.add_raw_pose_handler(print)
     m.set_leds(m.cls.color, m.cls.color)
-    # pygame.display.set_caption(m.cls.name)
+
+    yaw_zero = pitch_zero = roll_zero = 0
 
     try:
         if TRANSMIT_MODE:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((host, port))
-        else:
-            print("Test mode on")
 
         while True:
             euler_angles = m.get_euler_angles()
             emg_data = hnd.get_emg()
+
             if None not in euler_angles:
                 roll, pitch, yaw = euler_angles
                 if keyboard.is_pressed('space'):
-                    yaw_zero = yaw
-                    pitch_zero = pitch
-                    roll_zero = roll
+                    yaw_zero, pitch_zero, roll_zero = yaw, pitch, roll
 
                 yaw -= yaw_zero
                 pitch -= pitch_zero
                 roll -= roll_zero
 
-                data = f"{roll},{yaw * (-1)},{pitch}"
-                print(data)
+                data_str = f"{roll},{-yaw},{pitch}"
+                print(data_str)
                 print(emg_data)
 
-                # if len(emg_data) == 8:  # Ensure there are exactly 8 values
-                #     emg_str = ','.join(map(str, emg_data))  # Convert EMG data to a comma-separated string
-                #     ser.write((emg_str + '\n').encode())  # Send the string with a newline character
-                #     print(f"Sent to Arduino: {emg_str}")
-                #     time.sleep(0.05)  # Add a small delay (100 ms)
-                # else:
-                #     print("Invalid EMG data length")
-
             m.run()
-            # m.run_gui(hnd, scr, font, w, h)
 
             if TRANSMIT_MODE:
-                sock.sendall(data.encode("utf-8"))
+                sock.sendall(data_str.encode("utf-8"))
                 response = sock.recv(1024).decode("utf-8")
                 print(response)
 
@@ -251,5 +192,50 @@ if __name__ == '__main__':
         pass
     finally:
         m.disconnect()
-        # ser.close()  # Close the serial connection
-        # pygame.quit()
+        if plot_process:
+            plot_process.terminate()
+            plot_process.join()
+
+
+# === Arquivo separado: emg_plot.py ===
+
+import pygame
+from pygame.locals import *
+import multiprocessing
+
+last_vals = None
+
+def plot(scr, vals, w, h):
+    global last_vals
+    DRAW_LINES = True
+    D = 5
+    if last_vals is None:
+        last_vals = vals
+        return
+    scr.scroll(-D)
+    scr.fill((0, 0, 0), (w - D, 0, D, h))
+    for i, (u, v) in enumerate(zip(last_vals, vals)):
+        if DRAW_LINES:
+            pygame.draw.line(scr, (0, 255, 0),
+                             (w - D, int(h / 9 * (i + 1 - u))),
+                             (w, int(h / 9 * (i + 1 - v))))
+            pygame.draw.line(scr, (255, 255, 255),
+                             (w - D, int(h / 9 * (i + 1))),
+                             (w, int(h / 9 * (i + 1))))
+    pygame.display.flip()
+    last_vals = vals
+
+def plot_worker(q):
+    pygame.init()
+    w, h = 800, 600
+    scr = pygame.display.set_mode((w, h))
+    pygame.display.set_caption("EMG Plot")
+    try:
+        while True:
+            pygame.event.pump()
+            while not q.empty():
+                emg = list(q.get())
+                normalized = [e / 500.0 for e in emg]
+                plot(scr, normalized, w, h)
+    except KeyboardInterrupt:
+        pygame.quit()
