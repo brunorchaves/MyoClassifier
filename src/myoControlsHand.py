@@ -14,6 +14,7 @@ import queue
 import socket
 import multiprocessing
 from plot_emgs import plot_worker
+import threading
 
 # Queue for sharing data with the plotter
 plot_queue = multiprocessing.Queue()
@@ -113,16 +114,19 @@ class MyoClassifier(Myo):
     def add_raw_pose_handler(self, h):
         self.pose_handlers.append(h)
 
+
     def on_raw_pose(self, pose):
         for h in self.pose_handlers:
             h(pose)
+
         now = time.time()
         if now - self.last_key_press_time >= 0.4:
             if 0 <= pose <= 9:
-                keyboard.press(str(int(pose)))
-                time.sleep(0.1)
-                keyboard.release(str(int(pose)))
+                key = str(int(pose))
+                keyboard.press(key)
+                threading.Timer(0.1, lambda: keyboard.release(key)).start()  # Libera depois, sem travar
             self.last_key_press_time = now
+
 
 class EMGHandler:
     def __init__(self, m, plot_queue=None):
@@ -226,8 +230,9 @@ def plot(scr, vals, w, h):
     last_vals = vals
 
 def plot_worker(q):
+    os.environ['SDL_VIDEO_CENTERED'] = '1'  # Centraliza a janela
     pygame.init()
-    w, h = 800, 600
+    w, h = 400, 300
     scr = pygame.display.set_mode((w, h))
     pygame.display.set_caption("EMG Plot")
     try:
