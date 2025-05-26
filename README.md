@@ -3,7 +3,8 @@
 ## Overview
 MyoClassifier is a project designed to acquire EMG signals from the Myo Armband and classify hand gestures in real time using various machine learning techniques. Built extensively on the Pyomyo library for signal acquisition and processing, the system translates muscle activity into precise gesture predictions. These predictions control a 3D hand model in Unity, replicating the user's movements. Additionally, the system collects and processes IMU data from the Myo Armband to accurately track and adjust the 3D hand's orientation.
 
-![Demo Image](demoimage.jpeg)
+<img src="demoimage.jpeg" alt="Demo Image" width="25%">
+
 
 ## Project Structure
 The project is organized into the following directories and files:
