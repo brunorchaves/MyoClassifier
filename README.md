@@ -8,6 +8,11 @@ MyoClassifier is a project designed to acquire EMG signals from the Myo Armband 
 </p>
 
 
+<p align="center">
+  <img src="emgMyo.gif" alt="EMG Myo Demo" width="60%">
+</p>
+
+
 ## Project Structure
 The project is organized into the following directories and files:
 
