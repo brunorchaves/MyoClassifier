@@ -9,8 +9,9 @@ MyoClassifier is a project designed to acquire EMG signals from the Myo Armband 
 </p>
 
 And the demosntration: 
+
 <p align="center">
-  <img src="emgMyo.gif" alt="EMG Myo Demo" width="60%">
+  [![Clique para assistir ao vídeo de demonstração](https://img.youtube.com/vi/VIDEO_ID/hqdefault.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
 </p>
 
 ## Project Structure
