@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyoClassifier — mão 3D</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07090f; --bg2: #0c1119; --linha: rgba(150,180,230,.16);
+    --ink: #e9eef8; --ink2: #b9c4d8; --fraco: #7d8ba5; --apagado: #5a6579;
+    --ciano: #22d3ee; --verde: #a3e635; --ambar: #fbbf24;
+    --rosa: #f472b6; --vermelho: #fb7185; --violeta: #a78bfa;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; overflow: hidden; background: var(--bg);
+         color: var(--ink); font: 14px/1.55 "Segoe UI", system-ui, sans-serif;
+         display: grid; grid-template-columns: 1fr 330px; }
+
+  /* ---------- palco ---------- */
+  #palco { position: relative; background:
+      radial-gradient(900px 600px at 30% 10%, rgba(34,211,238,.07), transparent 60%),
+      radial-gradient(700px 500px at 90% 95%, rgba(244,114,182,.06), transparent 60%),
+      var(--bg); }
+  #palco canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; left: 20px; top: 18px; pointer-events: none; }
+  #hud .fonte { font: 11px var(--mono); letter-spacing: .12em; text-transform: uppercase;
+                color: var(--fraco); display: flex; align-items: center; gap: 8px; }
+  #hud .fonte i { width: 8px; height: 8px; border-radius: 50%; background: var(--apagado);
+                  display: inline-block; }
+  #hud .fonte.vivo i { background: var(--verde); box-shadow: 0 0 9px var(--verde); }
+  #hud .fonte.sim i  { background: var(--ambar); }
+  #hud .fonte.off i  { background: var(--vermelho); }
+  #hud .gesto { font-size: 30px; font-weight: 600; margin-top: 8px; letter-spacing: -.01em; }
+  #hud .clipe { font: 11px var(--mono); color: var(--apagado); margin-top: 2px; }
+  #ang { position: absolute; right: 20px; top: 18px; text-align: right;
+         font: 11.5px var(--mono); color: var(--fraco); pointer-events: none; }
+  #ang b { color: var(--ambar); font-weight: 500; }
+  #dica { position: absolute; left: 20px; bottom: 16px; font: 11px var(--mono);
+          color: var(--apagado); pointer-events: none; }
+
+  /* ---------- painel ---------- */
+  #painel { background: var(--bg2); border-left: 1px solid var(--linha);
+            overflow-y: auto; padding: 18px 18px 26px; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  h1 span { color: var(--ciano); }
+  .sub { font-size: 11.5px; color: var(--fraco); margin-bottom: 18px; line-height: 1.5; }
+  h2 { font: 600 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase;
+       color: var(--fraco); margin: 20px 0 9px; }
+  h2:first-of-type { margin-top: 0; }
+
+  button { font: 11.5px var(--mono); padding: 7px 11px; margin: 0 5px 6px 0;
+           background: rgba(255,255,255,.05); color: var(--ink);
+           border: 1px solid var(--linha); border-radius: 7px; cursor: pointer;
+           transition: all .15s; }
+  button:hover { border-color: var(--ciano); color: var(--ciano); }
+  button.on { background: rgba(34,211,238,.14); border-color: var(--ciano); color: var(--ciano); }
+
+  .barra { display: grid; grid-template-columns: 26px 1fr 34px; align-items: center;
+           gap: 8px; font: 11px var(--mono); color: var(--ink2); margin-bottom: 5px; }
+  .barra .trilho { height: 8px; background: rgba(255,255,255,.06); border-radius: 5px;
+                   overflow: hidden; }
+  .barra .cheio { height: 100%; border-radius: 5px; transition: width .08s linear; }
+  .barra .v { text-align: right; color: var(--apagado); }
+
+  .linha { display: flex; justify-content: space-between; font: 11.5px var(--mono);
+           color: var(--ink2); padding: 3px 0; }
+  .linha b { color: var(--ambar); font-weight: 500; }
+  .aviso { font-size: 11.5px; line-height: 1.55; color: var(--fraco);
+           border-left: 2px solid var(--ambar); padding: 2px 0 2px 10px; margin-top: 10px; }
+  code { font: 11px var(--mono); color: var(--verde); }
+  #erro { display: none; font-size: 12px; color: var(--vermelho); line-height: 1.5;
+          border: 1px solid rgba(251,113,133,.35); border-radius: 8px;
+          padding: 10px 12px; margin-bottom: 14px; }
+  @media (max-width: 900px) { body { grid-template-columns: 1fr; } #painel { display: none; } }
+</style>
+</head>
+<body>
+
+<div id="palco">
+  <canvas id="tela"></canvas>
+  <div id="hud">
+    <div class="fonte off" id="fonte"><i></i><span>procurando a ponte…</span></div>
+    <div class="gesto" id="gesto">—</div>
+    <div class="clipe" id="clipe"></div>
+  </div>
+  <div id="ang">roll pitch yaw<br><b id="euler">— — —</b></div>
+  <div id="dica">arraste para girar · scroll para zoom · teclas 1-4 trocam a pose</div>
+</div>
+
+<div id="painel">
+  <div id="erro"></div>
+
+  <h1>MyoClassifier — <span>mão 3D</span></h1>
+  <div class="sub">O mesmo FBX que o Unity usava, renderizado no three.js e
+    animado pela classificação do seu Myo. Sem Unity, sem emular teclado.</div>
+
+  <h2>pose</h2>
+  <div id="botoes"></div>
+
+  <h2>EMG por canal</h2>
+  <div id="barras"></div>
+
+  <h2>estado</h2>
+  <div class="linha"><span>fonte</span><b id="l-fonte">—</b></div>
+  <div class="linha"><span>taxa</span><b id="l-fs">—</b></div>
+  <div class="linha"><span>classe</span><b id="l-classe">—</b></div>
+  <div class="linha"><span>ossos / poses</span><b id="l-modelo">—</b></div>
+
+  <h2>visual</h2>
+  <div id="acoes">
+    <button id="b-imu" class="on">seguir a IMU</button>
+    <button id="b-girar">girar</button>
+    <button id="b-osso">esqueleto</button>
+    <button id="b-fio">wireframe</button>
+    <button id="b-camera">reenquadrar</button>
+  </div>
+
+  <div class="aviso" id="dicaponte">
+    Sem dado chegando. Rode <code>python run.py</code> na pasta
+    <code>hand3d/</code>, ou <code>python bridge.py --sim</code> para testar sem
+    o bracelete. Os botões de pose funcionam de qualquer jeito.
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/fflate.min.js"></script>
+<script src="vendor/FBXLoader.js"></script>
+<script src="vendor/OrbitControls.js"></script>
+<script src="hand.js"></script>
+</body>
+</html>

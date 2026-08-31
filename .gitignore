@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Projeto Unity: nunca foi commitado, e a Library/ do Unity e enorme.
+# O hand3d/ substitui ele — o FBX esta copiado em hand3d/web/model/.
+3DORientaion_test/
+3DORientaion_test.zip
+
+# Endereco BLE do bracelete: identifica um aparelho e o feed.py regrava
+# na primeira conexao.
+hand3d/myo_mac.txt
+
+# lixo de sistema
+Thumbs.db
+desktop.ini
+.DS_Store
