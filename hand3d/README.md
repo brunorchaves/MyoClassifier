@@ -136,7 +136,7 @@ the poses when the armband isn't cooperating.
 |---|---|---|
 | 1 | 259 | `Relaxed` — open hand |
 | 2 | 315 | `fist` — closed fist |
-| 3 | 402 | `spock` — spread fingers |
+| 3 | 402 | `spock` — Vulcan salute |
 | 4 | **0** | `Pointing` — **will never come out of the classifier** |
 
 The "pointing" button works (it's manual), but the Myo will never classify

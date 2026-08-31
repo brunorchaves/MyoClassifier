@@ -3,7 +3,7 @@
   "ordem": [
     { "classe": 1, "clip": "Relaxed", "nome": "mão aberta", "cor": "#a3e635" },
     { "classe": 2, "clip": "fist", "nome": "punho fechado", "cor": "#22d3ee" },
-    { "classe": 3, "clip": "spock", "nome": "dedos separados", "cor": "#a78bfa" },
+    { "classe": 3, "clip": "spock", "nome": "saudação vulcana", "cor": "#a78bfa" },
     { "classe": 4, "clip": "Pointing", "nome": "apontando", "cor": "#fbbf24" }
   ],
   "classe_desconhecida": "Relaxed",
@@ -22,7 +22,7 @@
       "classe": 6, "clip": "Peace", "nome": "paz e amor", "cor": "#38bdf8",
       "poseAberta": "Relaxed",
       "curvas": {
-        "indicador": { "de": "spock", "para": "fist", "t": 0 },
+        "indicador": { "de": "spock", "para": "fist", "t": 0, "girarZ": -20 },
         "medio": { "de": "spock", "para": "fist", "t": 0 },
         "anelar": 1, "minimo": 1,
         "polegar": 1

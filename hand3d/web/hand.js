@@ -289,6 +289,18 @@
         if (!b) return;
         b.quaternion.copy(qDe[nomeOsso]).slerp(qPara[nomeOsso], t);
       });
+      // abducao extra (separar/juntar o dedo do vizinho) — gira so o osso
+      // proximal (primeiro da cadeia) no eixo Z local dele, em graus. Achado
+      // por tentativa: Z e o eixo que move o dedo pro lado (X curva/estica,
+      // Y torce em volta do proprio comprimento). Sem isto, indicador e
+      // medio saem quase colados no peace sign (a spock so separa dedo 2-3
+      // do 4-5, nao afasta indicador do medio dentro do mesmo par).
+      if (typeof spec === 'object' && spec.girarZ) {
+        var osso0 = porNome[cadeia[0]];
+        var qZ = new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(0, 0, 1), spec.girarZ * Math.PI / 180);
+        osso0.quaternion.multiply(qZ);
+      }
     });
 
     // ORDEM IMPORTA: updateMatrixWorld tem que vir antes de skeleton.update().
