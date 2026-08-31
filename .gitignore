@@ -11,6 +11,11 @@ __pycache__/
 # na primeira conexao.
 hand3d/myo_mac.txt
 
+# Cache do modo desktop (PLANO-desktop.md): posicao/normal por vertice das
+# 4 poses, exportado da pagina web (botao "exportar poses" ou
+# exportar_poses_headless.py). Reconstruivel, e binario — nao commitar.
+hand3d/web/model/hand.cache.npz
+
 # lixo de sistema
 Thumbs.db
 desktop.ini

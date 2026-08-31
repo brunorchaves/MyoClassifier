@@ -1,0 +1,10 @@
+{
+  "_comentario": "classe do classificador -> clipe do FBX -> rotulo/cor. Fonte unica: bridge.py e desktop.py leem este arquivo, web/hand.js busca por fetch. Veja PLANO-desktop.md, Passo 5.",
+  "ordem": [
+    { "classe": 1, "clip": "Relaxed", "nome": "mão aberta", "cor": "#a3e635" },
+    { "classe": 2, "clip": "fist", "nome": "punho fechado", "cor": "#22d3ee" },
+    { "classe": 3, "clip": "spock", "nome": "dedos separados", "cor": "#a78bfa" },
+    { "classe": 4, "clip": "Pointing", "nome": "apontando", "cor": "#fbbf24" }
+  ],
+  "classe_desconhecida": "Relaxed"
+}

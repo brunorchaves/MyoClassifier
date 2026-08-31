@@ -38,6 +38,7 @@ import base64
 import hashlib
 import json
 import math
+import os
 import random
 import socket
 import struct
@@ -50,15 +51,25 @@ import time
 # recusar a conexao com code 1006 e nenhuma mensagem util.
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-# classe do classificador -> nome do clipe no FBX
-# (o handController.cs mapeava as teclas 1-4; é a mesma ordem)
-GESTOS = {
-    0: "Relaxed",
-    1: "Relaxed",
-    2: "fist",
-    3: "spock",
-    4: "Pointing",
-}
+AQUI = os.path.dirname(os.path.abspath(__file__))
+
+
+def carregar_gestos():
+    """classe do classificador -> nome do clipe no FBX.
+
+    Fonte unica em gestos.json (hand3d/PLANO-desktop.md, Passo 5): antes disto
+    o mapa vivia duplicado aqui e em web/hand.js (POSES). desktop.py le o
+    mesmo arquivo; hand.js busca por fetch.
+    """
+    caminho = os.path.join(AQUI, "gestos.json")
+    with open(caminho, encoding="utf-8") as f:
+        d = json.load(f)
+    padrao = d["classe_desconhecida"]
+    mapa = {item["classe"]: item["clip"] for item in d["ordem"]}
+    return mapa, padrao
+
+
+GESTOS, GESTO_PADRAO = carregar_gestos()
 
 # estado compartilhado, publicado para todos os navegadores conectados
 ESTADO = {
@@ -330,7 +341,7 @@ def aplicar(s):
             if "gesture" in d:
                 g = int(d["gesture"])
                 ESTADO["gesture"] = g
-                ESTADO["name"] = GESTOS.get(g, "Relaxed")
+                ESTADO["name"] = GESTOS.get(g, GESTO_PADRAO)
             if "rms" in d:
                 ESTADO["rms"] = [float(x) for x in d["rms"]][:8]
             if "fs" in d:
@@ -359,7 +370,7 @@ def aplicar(s):
         if len(vals) >= 4:
             g = int(vals[3])
             ESTADO["gesture"] = g
-            ESTADO["name"] = GESTOS.get(g, "Relaxed")
+            ESTADO["name"] = GESTOS.get(g, GESTO_PADRAO)
         ESTADO["src"] = "myo"
         ESTADO["t"] = time.time()
     return True
@@ -391,7 +402,7 @@ def simulador():
             base = [0.26, 0.18, 0.16, 0.52, 0.94, 0.98, 0.62, 0.34]
         with LOCK:
             ESTADO["gesture"] = g
-            ESTADO["name"] = GESTOS.get(g, "Relaxed")
+            ESTADO["name"] = GESTOS.get(g, GESTO_PADRAO)
             ESTADO["euler"] = [22 * math.sin(t * 0.7),
                                14 * math.sin(t * 0.5 + 1.0),
                                30 * math.sin(t * 0.33)]

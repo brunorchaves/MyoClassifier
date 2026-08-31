@@ -27,14 +27,11 @@
   var ORIENT = { rx: -90, ry: 0, rz: 90 };
   var CAM = { az: 32, el: 8, zoom: 1.55 };
 
-  /* classe do classificador -> clipe do FBX -> rótulo.
-     É o mesmo mapa do GESTOS no bridge.py; mantenha os dois juntos. */
-  var POSES = [
-    { clip: 'Relaxed',  nome: 'mão aberta',      classe: 1, cor: '#a3e635' },
-    { clip: 'fist',     nome: 'punho fechado',   classe: 2, cor: '#22d3ee' },
-    { clip: 'spock',    nome: 'dedos separados', classe: 3, cor: '#a78bfa' },
-    { clip: 'Pointing', nome: 'apontando',       classe: 4, cor: '#fbbf24' }
-  ];
+  /* classe do classificador -> clipe do FBX -> rótulo. Vem de gestos.json,
+     fonte única (bridge.py e desktop.py leem o mesmo arquivo). Preenchido
+     pelo fetch no fim deste arquivo, antes de qualquer coisa que precise
+     dele (botões, teclado, FBXLoader). */
+  var POSES = null;
 
   var CORES_CANAL = ['#22d3ee', '#2dd4bf', '#a3e635', '#fbbf24',
                      '#fb923c', '#fb7185', '#f472b6', '#a78bfa'];
@@ -89,6 +86,126 @@
 
   var modelo = null, mixer = null, acoes = [], esqueleto = null, maxDim = 1;
 
+  /* ---------- exportar poses (modo desktop, rota B) ----------
+     O assimp-py nao expoe ossos/pesos/animacoes deste FBX (so malha estatica
+     — ver hand3d/PLANO-desktop.md). A fonte dos dados passa a ser o proprio
+     three.js: para cada uma das 4 poses, calcula a posicao e a normal JA
+     SKINADAS por vertice (a mesma formula do skinning_vertex.glsl.js do
+     three.js: skinned = bindMatrixInverse * Sum(peso_i * boneMatriz_i * bindMatrix
+     * vertice)) e devolve tudo em base64. O modo desktop so interpola essas
+     4 posicoes por vertice — perde a mistura em espaco de osso, ganha
+     simplicidade (nao precisa reimplementar leitura de FBX em Python). */
+  function b64DeFloat32(arr) {
+    var bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+    var bin = '', CH = 0x8000;
+    for (var i = 0; i < bytes.length; i += CH) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    }
+    return btoa(bin);
+  }
+
+  function exportarPoses() {
+    if (!modelo || !acoes.length || !POSES) return { erro: 'modelo ainda nao carregou' };
+    var malha = null;
+    modelo.traverse(function (n) { if (n.isSkinnedMesh && !malha) malha = n; });
+    if (!malha) return { erro: 'nenhum SkinnedMesh no modelo' };
+
+    var geo = malha.geometry;
+    var pos = geo.attributes.position;
+    var nrm = geo.attributes.normal;
+    var skinIdx = geo.attributes.skinIndex;
+    var skinWt = geo.attributes.skinWeight;
+    var N = pos.count;
+    var idxArr = geo.index ? geo.index.array : null;
+
+    var pesosOriginais = acoes.map(function (a) { return a ? a.getEffectiveWeight() : 0; });
+    var idxOriginal = st.idx;
+    var pivotRotOriginal = pivot.rotation.clone();
+
+    var out = {
+      n_vertices: N,
+      max_dim: maxDim,
+      indices_u32: idxArr ? b64DeFloat32(Uint32Array.from(idxArr)) : null,
+      poses: {}
+    };
+
+    // pivot em zero: o export ja inclui a centralizacao (obj.position) e a
+    // correcao de eixo (ORIENT), via malha.matrixWorld — assim o desktop.py
+    // so precisa aplicar a rotacao vinda da IMU em cima disto, sem reimplementar
+    // ORIENT nem a conta de centralizacao.
+    pivot.rotation.set(0, 0, 0);
+    cena.updateMatrixWorld(true);
+    var matrizMundo = malha.matrixWorld.clone();
+
+    var bindPos = new THREE.Vector4();
+    var bindNrm = new THREE.Vector4();
+    var boneMat = new THREE.Matrix4();
+    var acumPos = new THREE.Vector4();
+    var acumNrm = new THREE.Vector4();
+    var cp = new THREE.Vector4();
+    var cn = new THREE.Vector4();
+    var getComp = ['getX', 'getY', 'getZ', 'getW'];
+    function comp(attr, v, j) { return attr[getComp[j]](v); }
+
+    POSES.forEach(function (p, i) {
+      acoes.forEach(function (a, k) { if (a) a.setEffectiveWeight(k === i ? 1 : 0); });
+      if (mixer) mixer.update(0);
+      cena.updateMatrixWorld(true);
+      malha.skeleton.update();
+      var bm = malha.skeleton.boneMatrices;
+
+      var positions = new Float32Array(N * 3);
+      var normals = new Float32Array(N * 3);
+      for (var v = 0; v < N; v++) {
+        bindPos.set(pos.getX(v), pos.getY(v), pos.getZ(v), 1).applyMatrix4(malha.bindMatrix);
+        bindNrm.set(nrm.getX(v), nrm.getY(v), nrm.getZ(v), 0).applyMatrix4(malha.bindMatrix);
+        acumPos.set(0, 0, 0, 0);
+        acumNrm.set(0, 0, 0, 0);
+        for (var j = 0; j < 4; j++) {
+          var w = comp(skinWt, v, j);
+          if (!w) continue;
+          var bi = comp(skinIdx, v, j);
+          boneMat.fromArray(bm, bi * 16);
+          cp.copy(bindPos).applyMatrix4(boneMat);
+          cn.copy(bindNrm).applyMatrix4(boneMat);
+          acumPos.x += cp.x * w; acumPos.y += cp.y * w; acumPos.z += cp.z * w;
+          acumNrm.x += cn.x * w; acumNrm.y += cn.y * w; acumNrm.z += cn.z * w;
+        }
+        acumPos.applyMatrix4(malha.bindMatrixInverse);
+        acumNrm.applyMatrix4(malha.bindMatrixInverse);
+        // leva pro espaco "de mundo com pivot zerado": ja inclui a
+        // centralizacao e o ORIENT, fixos, calculados uma vez acima
+        acumPos.applyMatrix4(matrizMundo);
+        acumNrm.applyMatrix4(matrizMundo);
+        var nlen = Math.hypot(acumNrm.x, acumNrm.y, acumNrm.z) || 1;
+        positions[v * 3] = acumPos.x; positions[v * 3 + 1] = acumPos.y; positions[v * 3 + 2] = acumPos.z;
+        normals[v * 3] = acumNrm.x / nlen; normals[v * 3 + 1] = acumNrm.y / nlen; normals[v * 3 + 2] = acumNrm.z / nlen;
+      }
+      out.poses[p.clip] = { position_f32: b64DeFloat32(positions), normal_f32: b64DeFloat32(normals) };
+    });
+
+    // devolve o mixer e o pivot ao estado visual de antes de exportar
+    acoes.forEach(function (a, k) { if (a) a.setEffectiveWeight(pesosOriginais[k]); });
+    if (mixer) mixer.update(0);
+    pivot.rotation.copy(pivotRotOriginal);
+    porPose(idxOriginal, false);
+
+    return out;
+  }
+  window.exportarPoses = exportarPoses;
+
+  function exportarPosesEBaixar() {
+    var out = exportarPoses();
+    if (out.erro) { falhar('Exportar poses: ' + out.erro); return; }
+    var blob = new Blob([JSON.stringify(out)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'hand_poses.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   function redimensionar() {
     var w = palco.clientWidth, h = palco.clientHeight;
     if (!w || !h) return;
@@ -111,7 +228,34 @@
     orbita.update();
   }
 
-  // ---------- carrega o modelo ----------
+  // ---------- carrega o mapa de gestos, depois o modelo ----------
+  function iniciarComPoses(poses) {
+    POSES = poses;
+    carregarModelo();
+    POSES.forEach(function (p, i) {
+      var b = document.createElement('button');
+      b.textContent = p.nome;
+      b.onclick = function () { porPose(i, true); };
+      el.botoes.appendChild(b);
+    });
+    document.addEventListener('keydown', function (ev) {
+      var n = parseInt(ev.key, 10);
+      if (n >= 1 && n <= POSES.length) porPose(n - 1, true);
+    });
+  }
+
+  fetch('gestos.json').then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (d) {
+    iniciarComPoses(d.ordem.map(function (item) {
+      return { clip: item.clip, nome: item.nome, classe: item.classe, cor: item.cor };
+    }));
+  }).catch(function (e) {
+    falhar('Não consegui carregar <code>gestos.json</code> (' + e + ').');
+  });
+
+  function carregarModelo() {
   new THREE.FBXLoader().load(MODELO, function (obj) {
     var ossos = 0;
     obj.traverse(function (n) {
@@ -162,10 +306,11 @@
            'Rode pelo <code>serve.py</code> (abrir o arquivo direto não funciona: ' +
            'o navegador bloqueia a leitura local).');
   });
+  }
 
   // ---------- poses ----------
   function porPose(i, manual) {
-    if (i < 0 || i >= POSES.length) return;
+    if (!POSES || i < 0 || i >= POSES.length) return;
     st.idx = i;
     st.alvo = POSES.map(function (_, k) { return k === i ? 1 : 0; });
     if (manual) st.fonte = st.fonte === 'off' ? 'off' : 'manual';
@@ -177,18 +322,6 @@
       b.classList.toggle('on', k === i);
     });
   }
-
-  POSES.forEach(function (p, i) {
-    var b = document.createElement('button');
-    b.textContent = p.nome;
-    b.onclick = function () { porPose(i, true); };
-    el.botoes.appendChild(b);
-  });
-
-  document.addEventListener('keydown', function (ev) {
-    var n = parseInt(ev.key, 10);
-    if (n >= 1 && n <= POSES.length) porPose(n - 1, true);
-  });
 
   // ---------- barras de EMG ----------
   var cheios = [];
@@ -223,7 +356,7 @@
         st.eulerAlvo = [+d.euler[0], +d.euler[1], +d.euler[2]];
       }
       if (d.rms && d.rms.length) st.rms = d.rms.map(Number);
-      if (d.name) {
+      if (d.name && POSES) {
         for (var i = 0; i < POSES.length; i++) {
           if (POSES[i].clip.toLowerCase() === String(d.name).toLowerCase()) {
             if (i !== st.idx) porPose(i, false);
@@ -259,6 +392,8 @@
     this.classList.toggle('on', ligado);
   };
   document.getElementById('b-camera').onclick = enquadrar;
+  var bExportar = document.getElementById('b-exportar');
+  if (bExportar) bExportar.onclick = exportarPosesEBaixar;
 
   // ---------- laço ----------
   function pintarPainel() {

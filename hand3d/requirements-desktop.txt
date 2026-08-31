@@ -1,0 +1,14 @@
+# modo desktop (PLANO-desktop.md) — janela nativa, sem navegador.
+#
+# assimp-py NAO esta aqui: a rota escolhida (B, Passo 0 do plano) nao le o
+# FBX em Python — os dados vem de web/model/hand.cache.npz, gerado uma vez
+# pela pagina web. Ver PLANO-desktop.md.
+moderngl>=5.12
+moderngl-window>=3.1
+pyglet>=2.1
+numpy
+Pillow
+
+# so pra REGERAR o cache sem abrir navegador (exportar_poses_headless.py) —
+# nao e usado pelo desktop.py em si:
+#   pip install playwright && playwright install chromium

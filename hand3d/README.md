@@ -1,99 +1,106 @@
-# hand3d — a mão 3D no navegador, sem Unity
+# hand3d — the 3D hand in the browser, no Unity
 
-O mesmo `handAnimations.fbx` que o projeto Unity usava, renderizado com
-[three.js](https://threejs.org) e animado pela classificação do Myo. Roda numa
-aba do navegador: sem abrir editor, sem dar Play, sem deixar janela em foco.
+The same `handAnimations.fbx` the Unity project used, rendered with
+[three.js](https://threejs.org) and animated by the Myo's classification. Runs
+in a browser tab: no editor to open, no Play to hit, no window that needs
+focus.
 
 ```bash
 cd hand3d
 python run.py
 ```
 
-Um comando sobe a ponte, lê o bracelete e abre a página. `Ctrl+C` derruba tudo.
+One command brings up the bridge, reads the armband, and opens the page.
+`Ctrl+C` tears everything down.
 
 ---
 
-## O que substituiu o quê
+## What replaced what
 
-| Unity (`3DORientaion_test/`) | agora |
+| Unity (`3DORientaion_test/`) | now |
 |---|---|
-| `myListener.cs` — servidor TCP 25001 → `transform.rotation` | `bridge.py` → WebSocket → `pivot.rotation` no `web/hand.js` |
-| `handController.cs` — `Animator` com blend tree Grip × Trigger | `AnimationMixer` com um peso por clipe |
-| gesto via **tecla emulada** (`Input.GetKeyDown`, lib `keyboard`) | campo `gesture` no JSON |
-| editor + build + janela em foco | uma aba do navegador |
+| `myListener.cs` — TCP server on 25001 → `transform.rotation` | `bridge.py` → WebSocket → `pivot.rotation` in `web/hand.js` |
+| `handController.cs` — `Animator` with a Grip × Trigger blend tree | `AnimationMixer` with one weight per clip |
+| gesture via **emulated keypress** (`Input.GetKeyDown`, the `keyboard` lib) | `gesture` field in the JSON |
+| editor + build + a window that needs focus | one browser tab |
 
-O detalhe que fez isso ser simples: o FBX traz as quatro poses (`Relaxed`,
-`fist`, `spock`, `Pointing`) como **clipes de um quadro**. Clipe de um quadro é
-exatamente o que um blend tree mistura — então a transição suave entre gestos
-sai de interpolar peso, não de animação gravada.
+The detail that made this simple: the FBX carries the four poses (`Relaxed`,
+`fist`, `spock`, `Pointing`) as **single-frame clips**. A single-frame clip is
+exactly what a blend tree mixes — so the smooth transition between gestures
+comes from interpolating a weight, not from a recorded animation.
 
-O `keyboard.press()` era o ponto mais frágil da montagem antiga: só funcionava
-com a janela do Unity em foco, e em alguns sistemas pede privilégio de
-administrador. Agora o gesto viaja no mesmo pacote da orientação.
+`keyboard.press()` was the most fragile part of the old setup: it only worked
+with the Unity window focused, and on some systems it asks for admin
+privileges. Now the gesture travels in the same packet as the orientation.
 
 ---
 
-## As três peças
+## The pieces
 
 ```
 hand3d/
-  run.py        sobe tudo com um comando, com nova tentativa se o Myo dorme
-  bridge.py     WebSocket :8765 + TCP :25001 — o lugar do Unity
-  feed.py       lê o Myo (pyomyo), classifica (1-NN) e alimenta a ponte
-  serve.py      servidor estático da página
+  run.py        brings everything up with one command, retries if the Myo is asleep
+  bridge.py     WebSocket :8765 + TCP :25001 — Unity's old spot
+  feed.py       reads the Myo (pyomyo), classifies (1-NN) and feeds the bridge
+  serve.py      static server for the page
+  gestos.json   class -> pose, single source of truth (bridge.py, desktop.py, hand.js)
+  desktop.py    desktop mode: native window, no browser (see below)
+  modelo.py     reads/validates the pose cache for desktop mode
+  exportar_poses_headless.py   builds the cache without opening a browser (dev-only)
   web/
-    index.html  a interface
-    hand.js     three.js: carrega o FBX, mistura as poses, ouve a ponte
-    model/hand.fbx     cópia de Assets/handAnimations.fbx
-    vendor/            three.js r147 + FBXLoader (local, funciona offline)
+    index.html  the UI
+    hand.js     three.js: loads the FBX, blends the poses, listens to the bridge
+    model/hand.fbx     copy of Assets/handAnimations.fbx
+    model/hand.cache.npz   desktop-mode cache (generated, not in git)
+    vendor/            three.js r147 + FBXLoader (vendored, works offline)
 ```
 
-### `bridge.py` — fala o protocolo do Unity
+### `bridge.py` — speaks Unity's protocol
 
-Escuta na **porta 25001 com o mesmo protocolo do `myListener.cs`**, inclusive o
-eco que o `sock.recv()` do `src/myoControlsHand.py` espera. Ou seja: **o seu
-script antigo roda sem alteração** e a mão já gira.
+Listens on **port 25001 with the same protocol as `myListener.cs`**, including
+the echo that `sock.recv()` in `src/myoControlsHand.py` expects. In other
+words: **your old script runs unchanged** and the hand already turns.
 
-Para o **gesto** também chegar, é uma linha nele:
+To get the **gesture** through too, it's one line in it:
 
 ```python
-data_str = f"{roll},{-yaw},{pitch}"                 # antes
-data_str = f"{roll},{-yaw},{pitch},{int(pose)}"     # depois
+data_str = f"{roll},{-yaw},{pitch}"                 # before
+data_str = f"{roll},{-yaw},{pitch},{int(pose)}"     # after
 ```
 
-O WebSocket escuta na 8765 e é ali que a página se conecta.
+The WebSocket listens on 8765, and that's where the page connects.
 
-### `feed.py` — o caminho recomendado
+### `feed.py` — the recommended path
 
-Substitui o `src/myoControlsHand.py` para este uso, e resolve dois problemas
-dele:
+Replaces `src/myoControlsHand.py` for this use case, and fixes two problems
+with it:
 
-- **Dependências.** O script antigo importa `pygame`, `keyboard`, `joblib` e
-  `scikit-learn`. O `feed.py` usa só o `pyomyo` (que já está em `src/`) e
+- **Dependencies.** The old script imports `pygame`, `keyboard`, `joblib` and
+  `scikit-learn`. `feed.py` only uses `pyomyo` (already in `src/`) and
   `numpy`.
-- **O scan que trava.** O `connect()` do `pyomyo` espera o evento de conexão
-  **sem timeout**, e o Myo dorme quando fica parado — o processo prende para
-  sempre. O `feed.py` conecta **pelo MAC**, que ele descobre uma vez e guarda em
-  `myo_mac.txt`, e tem um cão de guarda que desiste em 10 s com mensagem clara.
-  O `run.py` então tenta de novo: quando você pega o bracelete e mexe, a
-  tentativa seguinte pega.
+- **The scan that hangs.** `pyomyo`'s `connect()` waits for the connection
+  event **with no timeout**, and the Myo goes to sleep when idle — the
+  process hangs forever. `feed.py` connects **by MAC**, which it discovers
+  once and stores in `myo_mac.txt`, and has a watchdog that gives up after
+  10 s with a clear message. `run.py` then retries: once you pick up the
+  armband and move it, the next attempt gets through.
 
-A classificação é fiel à sua: o mesmo **1-NN** sobre os mesmos
-`src/data/vals*.dat`, e a mesma suavização por voto de maioria numa janela de
-25 amostras.
+Classification stays true to yours: the same **1-NN** over the same
+`src/data/vals*.dat`, and the same majority-vote smoothing over a 25-sample
+window.
 
 ---
 
-## Modos
+## Modes
 
 ```bash
-python run.py                 # ponte + Myo + página
-python run.py --sim           # sem bracelete: gesto e orientação inventados
-python run.py --sem-myo       # ponte + página, e você alimenta como quiser
+python run.py                 # bridge + Myo + page
+python run.py --sim           # no armband: gesture and orientation made up
+python run.py --sem-myo       # bridge + page, and you feed it however you like
 python run.py --porta 9000
 ```
 
-Ou as peças na mão, em três terminais:
+Or the pieces by hand, in three terminals:
 
 ```bash
 python bridge.py
@@ -101,78 +108,110 @@ python feed.py
 python serve.py
 ```
 
-Sem ponte nenhuma, a página ainda abre e os **botões da lateral** (ou as teclas
-`1`–`4`) comandam a pose. Útil para conferir o modelo, ou para mostrar as poses
-quando o bracelete não colabora.
+With no bridge at all, the page still opens and the **side buttons** (or the
+`1`–`4` keys) drive the pose. Useful for checking the model, or for showing
+the poses when the armband isn't cooperating.
 
 ---
 
-## A página
+## The page
 
-- **arraste** para orbitar, **scroll** para zoom, **`1`–`4`** trocam a pose
-- **seguir a IMU** — desliga a rotação vinda do bracelete, se você quiser só as
-  poses
-- **esqueleto** e **wireframe** — para conferir o rig
-- **EMG por canal** — as 8 barras, alimentadas pela ponte
-- o rótulo no alto esquerdo diz de onde vem o dado: `Myo ao vivo`,
-  `ponte em simulação`, `ponte no ar, sem dado do bracelete` ou `sem ponte`.
-  Ele **não** diz "ao vivo" quando não está — isso importa numa demonstração.
+- **drag** to orbit, **scroll** to zoom, **`1`–`4`** switch the pose
+- **follow the IMU** — turns off the rotation coming from the armband, if you
+  just want the poses
+- **skeleton** and **wireframe** — to check the rig
+- **EMG per channel** — the 8 bars, fed by the bridge
+- the label in the top-left says where the data is coming from: `Myo ao vivo`
+  (live), `ponte em simulação` (bridge in simulation), `ponte no ar, sem dado
+  do bracelete` (bridge up, no data from the armband), or `sem ponte` (no
+  bridge). It **doesn't** say "live" when it isn't — that matters in a demo.
 
 ---
 
-## ⚠️ Falta treino para um dos gestos
+## ⚠️ One gesture is missing training data
 
-Os `src/data/vals*.dat` têm 976 amostras, mas só nas classes 1, 2 e 3:
+`src/data/vals*.dat` has 976 samples, but only for classes 1, 2 and 3:
 
-| classe | amostras | clipe |
+| class | samples | clip |
 |---|---|---|
-| 1 | 259 | `Relaxed` — mão aberta |
-| 2 | 315 | `fist` — punho |
-| 3 | 402 | `spock` — dedos separados |
-| 4 | **0** | `Pointing` — **nunca vai sair do classificador** |
+| 1 | 259 | `Relaxed` — open hand |
+| 2 | 315 | `fist` — closed fist |
+| 3 | 402 | `spock` — spread fingers |
+| 4 | **0** | `Pointing` — **will never come out of the classifier** |
 
-O botão "apontando" funciona (é manual), mas o Myo nunca vai classificar essa
-pose. Grave a classe 4 com o `src/emgGestureTrainer.py`, ou ajuste o mapa
-`GESTOS` no `bridge.py` (e `POSES` no `web/hand.js`) para trabalhar com três
-gestos. O `feed.py` avisa isso ao subir.
-
----
-
-## Uma versão desktop, sem navegador?
-
-Está desenhada, mas **ainda não implementada**: veja
-[`PLANO-desktop.md`](PLANO-desktop.md). O resumo é que o render não é o problema —
-o problema é ler o FBX em Python, e o plano registra o levantamento já feito
-(inclusive as medições que descartam fazer o skinning na CPU) para a
-implementação não recomeçar do zero.
+The "pointing" button works (it's manual), but the Myo will never classify
+that pose. Record class 4 with `src/emgGestureTrainer.py`, or adjust the
+`GESTOS` map in `bridge.py` (and `POSES` in `web/hand.js`) to work with three
+gestures. `feed.py` warns about this on startup.
 
 ---
 
-## Dá pra apagar o projeto Unity?
+## Desktop mode — native window, no browser
 
-Do ponto de vista desta pasta, sim: o FBX está copiado em `web/model/hand.fbx`
-e nada mais aqui olha para `3DORientaion_test/`. Aquela pasta nunca foi
-commitada no repositório (o `.gitignore` agora a ignora explicitamente), e a
-`Library/` do Unity ocupa bastante espaço.
+```bash
+cd hand3d
+pip install -r requirements-desktop.txt
+python desktop.py                    # reads the Myo directly, in the same process
+python desktop.py --sim              # no armband: gesture/orientation made up
+python desktop.py --foto quadro.png  # renders one still frame and exits
+```
 
-Antes de apagar, guarde o `.blend` original em algum lugar — é dele que sai o
-rig, e o FBX é só a exportação.
+No bridge, no server, no port: `desktop.py` reads the Myo in the same process
+(reuses `feed.py`) and draws into a native OpenGL window (moderngl +
+moderngl-window + pyglet). Controls: **drag** to orbit, **scroll** to zoom,
+**1**–**4** switch the pose, **g** spins, **w** wireframe, **i** toggles
+following the IMU, **f** re-frames the camera.
+
+The FBX can't be read in Python with bones/weights/animations available (see
+[`PLANO-desktop.md`](PLANO-desktop.md), Step 0) — `assimp-py`, the only
+package installable with just `pip` on this machine, doesn't expose that for
+this file. The data instead comes pre-baked from `web/model/hand.cache.npz`:
+the web page itself (which already knows how to do skinning) computes the
+already-skinned position and normal of each of the 4 poses and exports that
+once — via the "export poses" button on the page, or without opening a
+browser with `python exportar_poses_headless.py` (dev-only,
+`pip install playwright && playwright install chromium`). `desktop.py` just
+reads that cache; the GPU blends 4 positions per vertex, weighted by pose —
+simpler than bone skinning, at the cost of losing the bone-space blend during
+the transition between gestures (imperceptible in practice).
+
+The class → pose map lives in [`gestos.json`](gestos.json), the single source
+of truth read by `bridge.py`, `desktop.py`, and by `web/hand.js` via `fetch`.
+
+On a machine with hybrid GPUs (Intel + NVIDIA), the window may open on the
+Intel one — the terminal prints `GL_RENDERER` on startup to confirm. To force
+the NVIDIA one, add `python.exe` under Settings → System → Display → Graphics
+settings, and mark it "high performance".
 
 ---
 
-## Notas técnicas
+## Can the Unity project be deleted?
 
-- **three.js r147** é a última versão com os scripts clássicos
-  (`examples/js/`), que carregam com `<script src>` sem módulos ES. Isso mantém
-  a página funcionando também ao ser aberta de um servidor simples, sem
-  bundler. Está vendorizado em `web/vendor/` para funcionar offline.
-- O FBX é **7.4 binário**, que o `FBXLoader` abre direto: 29 ossos, 1 malha
-  skinada, 105.696 vértices, 4 clipes. Carrega em ~0,8 s.
-- O modelo vem deitado (Blender é Z-up), então há uma correção de eixo fixa
-  (`rx: -90, rz: 90`) num grupo entre o pivot e a malha. Se você trocar o
-  modelo e ele aparecer torto, é esse `ORIENT` no `hand.js` que se ajusta.
-- O handshake do WebSocket no `bridge.py` é escrito na mão, sem dependências.
-  Se você mexer nele, confira contra o vetor de teste do RFC 6455: a chave
-  `dGhlIHNhbXBsZSBub25jZQ==` tem de dar
-  `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`. Uma letra fora do lugar no GUID mágico faz o
-  navegador recusar com `code 1006` e nenhuma mensagem útil.
+From this folder's point of view, yes: the FBX is copied into
+`web/model/hand.fbx` and nothing else here looks at `3DORientaion_test/`. That
+folder was never committed to the repository (`.gitignore` now explicitly
+ignores it), and Unity's `Library/` takes up a fair amount of space.
+
+Before deleting it, keep the original `.blend` file somewhere — that's where
+the rig comes from, and the FBX is just the export.
+
+---
+
+## Technical notes
+
+- **three.js r147** is the last version with the classic scripts
+  (`examples/js/`), which load via `<script src>` with no ES modules. That
+  keeps the page working when opened from a plain server too, with no
+  bundler. It's vendored under `web/vendor/` to work offline.
+- The FBX is **binary 7.4**, which `FBXLoader` opens directly: 29 bones, 1
+  skinned mesh, 105,696 vertices, 4 clips. Loads in ~0.8 s.
+- The model comes in lying down (Blender is Z-up), so there's a fixed axis
+  correction (`rx: -90, rz: 90`) in a group between the pivot and the mesh. If
+  you swap the model and it shows up crooked, that `ORIENT` in `hand.js` is
+  what needs adjusting.
+- The WebSocket handshake in `bridge.py` is hand-written, no dependencies. If
+  you touch it, check it against RFC 6455's test vector: the key
+  `dGhlIHNhbXBsZSBub25jZQ==` has to produce
+  `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`. One letter out of place in the magic GUID
+  makes the browser refuse the connection with `code 1006` and no useful
+  message.

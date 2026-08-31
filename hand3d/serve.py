@@ -15,7 +15,9 @@ import sys
 import threading
 import webbrowser
 
-RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+AQUI = os.path.dirname(os.path.abspath(__file__))
+RAIZ = os.path.join(AQUI, "web")
+GESTOS = os.path.join(AQUI, "gestos.json")
 PORTA = int(sys.argv[1]) if len(sys.argv) > 1 else 8010
 
 
@@ -27,6 +29,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # sem cache: F5 sempre pega a ultima versao
         self.send_header("Cache-Control", "no-store, must-revalidate")
         super().end_headers()
+
+    def do_GET(self):
+        # gestos.json fica em hand3d/ (fonte unica com bridge.py e
+        # desktop.py), fora da raiz estatica hand3d/web/ — serve-o na mao.
+        if self.path == "/gestos.json":
+            try:
+                with open(GESTOS, "rb") as f:
+                    corpo = f.read()
+            except OSError:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(corpo)))
+            self.end_headers()
+            self.wfile.write(corpo)
+            return
+        super().do_GET()
 
     def log_message(self, fmt, *args):
         if ".fbx" in self.path or self.path in ("/", "/index.html"):

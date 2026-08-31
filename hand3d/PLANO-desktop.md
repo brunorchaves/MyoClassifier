@@ -1,188 +1,264 @@
-# Plano: mão 3D em janela nativa, sem navegador
+# Plan: 3D hand in a native window, no browser
 
-> **Status: planejado, ainda NÃO implementado.**
-> Nenhum dos arquivos descritos aqui (`desktop.py`, `modelo.py`, `gestos.json`)
-> existe no repositório. O que funciona hoje é a versão web em `hand3d/web/`,
-> descrita no [`README.md`](README.md).
+> **Status: implemented (route B).** `desktop.py`, `modelo.py` and
+> `gestos.json` exist and work — see the "Desktop mode" section in the
+> [`README.md`](README.md) for day-to-day use. The web version in
+> `hand3d/web/` keeps working with no change in behavior.
 >
-> Este documento existe para registrar o levantamento e as medições que já foram
-> feitas, para que a implementação não recomece do zero. Ao implementar, atualize
-> ou remova este arquivo.
+> This document remains as a record of the research, the measurements, and
+> the decisions (mainly route B, decided in Step 0) — useful if the FBX ever
+> gets swapped out or the cache needs to be regenerated.
 
-## Contexto
+## Context
 
-A mão riggada roda hoje em `hand3d/web/` — three.js numa página, servida por
-`serve.py`, alimentada pela ponte WebSocket. Funciona, e já aposentou o Unity. Mas
-para ver a mão é preciso subir servidor, ponte e alimentador, e abrir o navegador.
+The rigged hand runs today in `hand3d/web/` — three.js on a page, served by
+`serve.py`, fed by the WebSocket bridge. It works, and it already retired
+Unity. But to see the hand you need to bring up a server, a bridge, and a
+feeder, and open a browser.
 
-A ideia é uma versão **desktop**: janela nativa, um comando, sem navegador. Duas
-decisões tomadas:
+The idea is a **desktop** version: a native window, one command, no browser.
+Two decisions already made:
 
-- **Dependências mínimas**: `moderngl` + `moderngl-window` + `pyglet` (~1,45 MB),
-  com o skinning na GPU.
-- **Lê o Myo direto**, no mesmo processo — sem ponte, sem servidor, sem porta.
+- **Minimal dependencies**: `moderngl` + `moderngl-window` + `pyglet`
+  (~1.45 MB), with skinning on the GPU.
+- **Reads the Myo directly**, in the same process — no bridge, no server, no
+  port.
 
-A versão web **continua existindo**: o deck de apresentação
+The web version **keeps existing**: the presentation deck
 ([bci_hci_presentation](https://github.com/brunorchaves/bci_hci_presentation))
-depende dela. O modo desktop é adição, não substituição.
+depends on it. Desktop mode is an addition, not a replacement.
 
-### O que o terreno impõe
+### What the terrain imposes
 
-Levantamento feito na máquina de desenvolvimento (Windows, Python 3.12.10):
+Survey done on the development machine (Windows, Python 3.12.10):
 
-| fato levantado | consequência |
+| fact found | consequence |
 |---|---|
-| Zero biblioteca 3D instalada (só numpy, scipy, matplotlib, pillow) | qualquer caminho exige `pip install` |
-| **Nenhum conversor de FBX** — sem Blender, sem fbx2gltf, sem assimp CLI, sem Node | ler o FBX em Python é o problema central, não o render |
-| PyPI aberto, wheels cp312/win_amd64 prontas, nenhuma compila | instalar é barato |
-| NVIDIA RTX 3050 + Intel UHD (híbrido) | janela OpenGL nativa é viável |
-| O FBX usa `PreRotation` e `GeometricTranslation` | parser FBX próprio sairia com o rig torto — **descartado** |
+| Zero 3D libraries installed (only numpy, scipy, matplotlib, pillow) | any path requires a `pip install` |
+| **No FBX converter at all** — no Blender, no fbx2gltf, no assimp CLI, no Node | reading the FBX in Python is the central problem, not the rendering |
+| PyPI open, cp312/win_amd64 wheels ready, none need to compile | installing is cheap |
+| NVIDIA RTX 3050 + Intel UHD (hybrid) | a native OpenGL window is viable |
+| The FBX uses `PreRotation` and `GeometricTranslation` | a homegrown FBX parser would come out with a crooked rig — **ruled out** |
 
-Duas medições feitas na mesma máquina, que definem a arquitetura:
+Two measurements taken on the same machine, which shape the architecture:
 
-- Skinning completo (105.696 vértices, 29 ossos, 4 influências) em NumPy na CPU:
-  **32 ms/quadro → ~31 fps**. Inviável.
-- Interpolar poses pré-calculadas: **2 ms/quadro → ~500 fps**.
+- Full skinning (105,696 vertices, 29 bones, 4 influences) in NumPy on the
+  CPU: **32 ms/frame → ~31 fps**. Not viable.
+- Interpolating precomputed poses: **2 ms/frame → ~500 fps**.
 
-Logo: o skinning vai para a GPU, e a CPU só compõe 29 matrizes de osso por quadro
-(custo desprezível). `mat4[29]` são 116 componentes vec4 — cabe folgado no limite
-de qualquer GPU, sem precisar de textura de ossos. Os buffers dão ~7 MB na GPU.
+So: skinning goes to the GPU, and the CPU only composes 29 bone matrices per
+frame (negligible cost). `mat4[29]` is 116 vec4 components — comfortably fits
+within the limits of any GPU, with no need for a bone texture. The buffers
+come out to ~7 MB on the GPU.
 
 ---
 
-## Passo 0 — Spike: como ler o FBX (decide todo o resto)
+## Step 0 — Spike: how to read the FBX (decides everything else) — ✅ done, route B
 
-É a única incógnita real. `pip install assimp-py` (1,80 MB, wheel cp312 pronta) e
-~20 linhas que carregam `web/model/hand.fbx` e imprimem o que ele expõe: malhas,
-ossos, pesos e — principalmente — **animações**.
-
-Critério de decisão:
-
-| o que o assimp-py expõe | rota |
-|---|---|
-| ossos + pesos + animações | **A** — tudo em Python, roda de um clone limpo |
-| ossos + pesos, sem animações | **A'** — malha e esqueleto do assimp; as 4 poses (TRS local por osso, ~7 KB de JSON) saem de um export único da página web, que já funciona |
-| nem ossos | **B** — export completo pelo navegador (posições já skinadas das 4 poses, ~4 MB) e o desktop só interpola vértices; perde a mistura em espaço de osso, ganha simplicidade |
-
-Aposta: **A'** é o resultado mais provável. Em qualquer rota o runtime do app é o
-mesmo; muda só de onde vêm os dados.
-
-## Passo 1 — `hand3d/modelo.py`: os dados do modelo
-
-Um módulo que devolve uma estrutura única, independente da rota escolhida:
+`pip install assimp-py` (cp312 wheel ready, fine) and a ~40-line script
+loading `web/model/hand.fbx` with `Process_Triangulate`. The actual result,
+different from the bet:
 
 ```
-posicoes(N,3) normais(N,3) indices(M,3)
-juntas(N,4) pesos(N,4)
-hierarquia: pai[29]   bind_inversa[29]
-poses: {"Relaxed": TRS_local[29], "fist": ..., "spock": ..., "Pointing": ...}
+Scene:  materials, meshes, num_materials, num_meshes, root_node   (NO animations)
+Mesh:   bitangents, colors, indices, material_index, name, normals,
+        num_faces, num_indices, num_uv_components, num_vertices,
+        tangents, texcoords, vertices                              (NO bones)
 ```
 
-- cacheia em `web/model/hand.cache.npz` (ignorado pelo git) para o arranque ser
-  instantâneo
-- **valida na carga**: soma dos pesos ≈ 1, índices de junta dentro do intervalo, as
-  4 poses presentes. Falhar cedo com mensagem clara é melhor que rig torto.
+The Python binding of `assimp-py` 1.1.0 is a minimal wrapper: it only exposes
+static mesh data (position/normal/UV/index). **No bones, no weights, no
+animations** — even though `root_node` shows the `Armature/Bone.*` hierarchy
+just fine (the skeleton exists in the file; the binding simply doesn't map it
+into Python). There's also no viable `pyassimp` without compiling (it needs
+the native libassimp library separately, out of scope for "just pip
+install").
 
-## Passo 2 — `hand3d/desktop.py`: a janela
+Decision: **route B**. Practical consequence, straight from the table above:
 
-`moderngl_window.WindowConfig` (gl_version 3.3) dá janela, laço, eventos de mouse e
-teclado sem código de plumbing.
+- **No bone-space blending.** What's left for desktop mode isn't
+  bone+weight+hierarchy — it's position and normal **already skinned**, per
+  vertex, once per pose. Steps 1–3 below were rewritten around that: no
+  `mat4[29]`, no per-bone quaternion nlerp; the shader blends 4
+  position/normal buffers by weight (it's literally morph-target blending).
+- **Data source = three.js, not assimp.** `assimp-py` is not in
+  `requirements-desktop.txt` — it isn't used at runtime at all.
+- **Export implemented**: `web/hand.js` gained `exportarPoses()` (the
+  "export poses" button on the page), which replicates the exact formula from
+  three.js's `skinning_vertex.glsl.js`/`skinnormal_vertex.glsl.js` —
+  `skinned = bindMatrixInverse · Σ weight_i · boneMatrix_i · bindMatrix · vertex`
+  — for each of the 4 poses, and returns position+normal as base64.
+- **Cache generated**: `web/model/hand.cache.npz` (105,696 vertices, no
+  index — the FBXLoader mesh already comes out as loose triangles, 3
+  vertices per triangle; `nrm_*` normalized). Generated once with
+  `exportar_poses_headless.py` (playwright + headless Chromium, a
+  **dev-only** dependency, not the app's) — the same computation a manual
+  click on the button would do.
 
-- VBO/IBO montados uma vez; uniform `mat4 ossos[29]` atualizado por quadro
-- **vertex shader**: linear blend skinning com 4 influências; normal pela mesma
-  combinação
-- **fragment shader**: Lambert + luz de borda + fresnel suave, na paleta da versão
-  web (fundo escuro, mão clara)
-- controles: mouse orbita, scroll dá zoom, `1`–`4` poses, `g` gira, `w` wireframe,
-  `i` alterna seguir a IMU, `f` reenquadra
-- **HUD sem dependência nova**: texto renderizado com PIL (já instalado) numa
-  textura, desenhado num quad — pose, fonte do dado, Hz, euler, fps
-- imprimir `ctx.info['GL_RENDERER']` no arranque: numa máquina híbrida é assim que
-  se descobre que caiu na Intel em vez da NVIDIA
+## Step 1 — `hand3d/modelo.py`: the model data — ✅ implemented
 
-## Passo 3 — Fidelidade ao three.js
+Route B: no joints/weights/hierarchy in Python at all — that was already
+consumed on the three.js side at export time. What's left:
 
-Os números têm de ser os mesmos de `web/hand.js`, senão a mão "sente" diferente:
+```
+n_vertices: int                          # 105,696, a multiple of 3 (loose triangles)
+posicoes: {"Relaxed": (N,3) f32, "fist": ..., "spock": ..., "Pointing": ...}
+normais:  {"Relaxed": (N,3) f32, ...}
+ordem: ["Relaxed", "fist", "spock", "Pointing"]   # same order as gestos.json
+```
 
-- pesos das poses: `k = 1 - exp(-dt/0.10)`
-- por osso: **nlerp dos quaternions** das 4 poses ponderado pelos pesos + lerp de
-  translação/escala, depois compõe a hierarquia e multiplica pela bind inversa.
-  Misturar em espaço de osso (e não de matriz nem de vértice) é o que reproduz o
-  `AnimationMixer`.
-- orientação: euler suavizado com `ke = 1 - exp(-dt/0.12)` e aplicado na **ordem
-  XYZ do three.js** — `R = Rx(roll)·Ry(yaw)·Rz(pitch)` — com a correção fixa de
-  eixo `ORIENT = Rx(-90)·Rz(90)` num nível acima
-- giro automático: `+0.55 rad/s` no eixo Y
-- 2,5 s sem dado volta para o modo manual
+- reads `web/model/hand.cache.npz` (git-ignored); if it doesn't exist, a
+  clear error telling you to click "export poses" on the page or run
+  `exportar_poses_headless.py`
+- **validates on load**: all 4 poses present, all with the same `(N,3)`
+  shape, N a multiple of 3, no NaN. Failing fast with a clear message beats a
+  crooked rig.
 
-## Passo 4 — O Myo no mesmo processo
+## Step 2 — `hand3d/desktop.py`: the window — ✅ implemented
 
-Reaproveitar de `feed.py` **sem reescrever**: `Classificador`,
-`euler_de_quaternion`, `descobrir_mac`, `ler_mac_salvo`, `salvar_mac`, e a
-suavização por voto de maioria (janela 25).
+`moderngl_window.WindowConfig` (gl_version 3.3, pyglet backend) gives you a
+window, the loop, and mouse/keyboard events with no plumbing code.
 
-- thread do Myo rodando `m.run()`, escrevendo num dict protegido por lock; o laço
-  de render só lê
-- o mesmo cão de guarda do `feed.py` (o `connect()` do pyomyo espera sem timeout e
-  prende para sempre se o bracelete dormir) — mas aqui o `desktop.py` deve **tentar
-  reconectar sozinho** em vez de morrer, porque a janela já está aberta
-- `--sim` inventa gesto e orientação, para ensaiar sem bracelete
-- `--foto saida.png` renderiza um quadro e sai — permite conferir o resultado sem
-  abrir janela
+- 4 position VBOs + 4 normal VBOs (one pair per pose), no index — draws
+  `TRIANGLES` directly (the FBXLoader mesh already comes out as loose
+  triangles)
+- **vertex shader**: `pos = Σ weight_i · pos_i`, `normal = Σ weight_i ·
+  normal_i` (a blend of 4 positions per vertex — literally a morph target,
+  not bone skinning; see Step 0/route B)
+- **fragment shader**: Lambert + rim light + soft fresnel, in the web
+  version's palette (`HemisphereLight` 0xbcd4ff/0x141a26, light 0xffffff,
+  rim 0x22d3ee, fill 0xf472b6) — a visual approximation, not pixel-perfect
+  PBR
+- `CULL_FACE` **deliberately off**: no guarantee about winding direction
+  after the skinning exported from three.js (see Risks)
+- controls: mouse orbits, scroll zooms, `1`–`4` for poses, `g` spins, `w`
+  wireframe, `i` toggles following the IMU, `f` re-frames the camera
+- **HUD with no new dependency**: text rendered with PIL onto an RGBA
+  texture, drawn on a quad in NDC — pose, data source, euler, Hz, fps
+- `ctx.info['GL_RENDERER']` printed on startup — on this machine (hybrid
+  Intel UHD + NVIDIA RTX 3050) the window opens on the **Intel** GPU by
+  default; force the NVIDIA one in Windows' graphics settings if you want
+  (see README)
 
-## Passo 5 — Mapa de gestos num lugar só
+## Step 3 — Fidelity to three.js — ✅ implemented, with one simplification
 
-Hoje o mapa classe→pose vive em `bridge.py` (`GESTOS`) e em `web/hand.js`
-(`POSES`). Com o desktop seriam **três cópias** — e o aviso da classe 4 sem treino
-já mostra que esse mapa muda. Criar `hand3d/gestos.json` como fonte única:
-`bridge.py` e `desktop.py` leem, `hand.js` busca por fetch.
+Route B changes this step: there's no more "bone space" at all on the
+desktop side — the `AnimationMixer`'s bone-space blend already happened (or
+didn't; see below) on the three.js side, at export time.
 
-## Passo 6 — Documentação
+- pose weights: `k = 1 - exp(-dt/0.10)` — same as the web version, now
+  weighting vertex positions instead of `AnimationAction` weights
+- orientation: euler smoothed with `ke = 1 - exp(-dt/0.12)`, applied as
+  `R = Rx(roll)·Ry(yaw)·Rz(pitch)` (three.js's XYZ order)
+- **ORIENT and the centering (`obj.position.sub(caixa.getCenter())`) are NOT
+  recomputed in Python.** `exportarPoses()` zeroes out `pivot` before
+  exporting and applies `malha.matrixWorld` (which already includes the
+  centering and `ORIENT`) to every vertex — so the exported data already
+  comes in the "world with pivot at zero" frame. `desktop.py` only
+  multiplies by `R` (the rotation coming from the IMU) on top of that. One
+  fewer matrix reimplementation outside of three.js, one fewer chance to flip
+  a sign.
+- automatic spin: `+0.55 rad/s`, accumulated in its own counter (`spin`) that
+  adds onto the yaw component — same effect as hand.js's
+  `pivot.rotation.y += dt*0.55`
+- 2.5 s with no data falls back to manual mode
+- **Accepted loss from route B**: the transition between poses blends
+  *already-skinned vertex positions*, not bones — for a hand opening/closing
+  that's visually identical; for very abrupt transitions between very
+  different poses it could "shrink" a little partway through (not observed
+  by eye across the 4 real poses).
 
-Seção "modo desktop" no [`README.md`](README.md) (quando usar cada modo, controles,
-o que instalar) e `hand3d/requirements-desktop.txt`.
+## Step 4 — The Myo in the same process — ✅ implemented
+
+Reuses from `feed.py` **with no rewrite**: `Classificador`,
+`euler_de_quaternion`, `descobrir_mac`, `ler_mac_salvo`, `salvar_mac`, and the
+majority-vote smoothing (window of 25, `feed.HIST`).
+
+- a Myo thread running `m.run()`, writing into `COMPARTILHADO` (a dict) under
+  `LOCK`; the render loop only reads
+- **no watchdog that kills the process.** pyomyo's `connect()` waits with no
+  timeout and hangs if the armband is asleep — but since the window is
+  already open, that's acceptable: the Myo thread just sits there blocked
+  (manual poses keep working via the keyboard), and as soon as the armband
+  wakes up `connect()` returns. On a disconnect WHILE RUNNING (not on the
+  initial connect), the thread catches the exception, calls `m.disconnect()`
+  and retries after 2 s — hence "tries to reconnect on its own" instead of
+  the `os._exit()` that `feed.py` uses (which makes sense there, because
+  `run.py` restarts the process; here there's no process to restart without
+  closing the window)
+- `--sim` makes up a gesture and orientation (same logic as `bridge.py`'s
+  `simulador()`), to rehearse without the armband
+- `--foto saida.png` renders a few frames (the window opens for real — an
+  offscreen FBO with no graphics session isn't reliable, see Risks) and saves
+  with PIL
+
+## Step 5 — One single place for the gesture map — ✅ implemented
+
+`hand3d/gestos.json` is the single source of truth: `bridge.py` and
+`desktop.py` both read the file (each with its own ~8-line
+`carregar_gestos()` — small enough to duplicate rather than build a shared
+module for), `web/hand.js` fetches it with `fetch('gestos.json')` before
+building the buttons and loading the model. `serve.py` gained a special route
+to serve that file (it lives in `hand3d/`, outside the static root
+`hand3d/web/`).
+
+## Step 6 — Documentation — ✅ implemented
+
+"Desktop mode" section in the [`README.md`](README.md) and
+`hand3d/requirements-desktop.txt`.
 
 ---
 
-## Arquivos
+## Files
 
-| arquivo | o que faz |
+| file | what it does |
 |---|---|
-| `hand3d/desktop.py` | **novo** — janela, shaders, laço, Myo em thread |
-| `hand3d/modelo.py` | **novo** — extrai/carrega malha, esqueleto e poses; cache npz |
-| `hand3d/gestos.json` | **novo** — mapa classe→clipe, fonte única |
-| `hand3d/requirements-desktop.txt` | **novo** — moderngl, moderngl-window, pyglet (+assimp-py nas rotas A/A') |
-| `hand3d/README.md` | seção do modo desktop |
-| `hand3d/bridge.py` | passa a ler `gestos.json` em vez do dict embutido |
-| `hand3d/web/hand.js` | lê `gestos.json`; e, nas rotas A'/B, ganha o botão de exportar |
-| `.gitignore` (raiz) | ignorar `hand3d/web/model/hand.cache.npz` |
+| `hand3d/desktop.py` | window, shaders, loop, Myo on a thread |
+| `hand3d/modelo.py` | reads/validates `hand.cache.npz`; `--importar` converts the JSON from the page's button |
+| `hand3d/gestos.json` | class→clip map, single source of truth |
+| `hand3d/exportar_poses_headless.py` | builds the cache without opening a browser (playwright, dev-only) |
+| `hand3d/requirements-desktop.txt` | moderngl, moderngl-window, pyglet, numpy, Pillow (no assimp-py — route B doesn't read the FBX in Python) |
+| `hand3d/README.md` | "Desktop mode" section |
+| `hand3d/bridge.py` | reads `gestos.json` (`carregar_gestos()`) instead of the embedded dict |
+| `hand3d/serve.py` | extra route to serve `hand3d/gestos.json` (outside the static root `web/`) |
+| `hand3d/web/hand.js` | fetches `gestos.json`; gained `exportarPoses()` + an "export poses" button |
+| `.gitignore` (root) | ignores `hand3d/web/model/hand.cache.npz` |
 
-## Verificação
+## Verification
 
-1. **Spike**: o script imprime malhas, ossos, pesos e animações que o assimp expõe
-   → define a rota antes de escrever o resto.
-2. **Fidelidade por imagem**: `python desktop.py --sim --foto p1.png` para cada uma
-   das 4 poses, e comparação lado a lado com a página web no mesmo ângulo. É o
-   teste que pega rig torto, mão espelhada e normal invertida.
-3. **Janela**: `python desktop.py --sim` — órbita, zoom, teclas `1`–`4`, `g`, `w`,
-   `i`, `f`; fps no HUD (esperado 60, travado pelo vsync).
-4. **Com o bracelete**: `python desktop.py` — gesto trocando e a mão girando com o
-   braço; conferir os ~48–50 Hz já medidos na cadeia web.
-5. **Regressão da web**: `python run.py --sim` e `python run.py` continuam
-   funcionando, inclusive depois da mudança do `gestos.json`.
+1. **Spike** — ✅ done: assimp-py doesn't expose bones/animations for this
+   FBX → route B.
+2. **Fidelity by image** — ✅ done informally: `desktop.py --sim` renders
+   all 4 poses correctly (open hand, fist, spread fingers, pointing — each
+   with the right silhouette, eyeballed against the web page). No automated
+   pixel-by-pixel side-by-side comparison was done.
+3. **Window** — ✅ `python desktop.py --sim` opens, renders the 4 poses, the
+   HUD updates (pose/source/euler/Hz/fps). FPS observed **well above 60**
+   (300–500+) on this machine: the `vsync=True` requested from pyglet isn't
+   being honored by the Intel driver in this setup — not a logic bug (real
+   `dt` is used in the smoothing, not fps), but worth noting: on a machine
+   where vsync actually works, it should cap around the monitor's refresh
+   rate.
+4. **With the armband** — ✅ **confirmed working** with a real Myo connected:
+   live gesture classification and arm-orientation tracking both drove the
+   hand correctly in the native window.
+5. **Web regression** — ✅ done: `bridge.py --sim` + `serve.py` opened in an
+   automated Chromium, all 4 pose buttons present, `fonte` showing "ponte em
+   simulação" (bridge in simulation), zero console errors — after migrating
+   `POSES` to `gestos.json` via fetch.
 
-## Riscos
+## Risks
 
-| risco | como se manifesta | diagnóstico |
+| risk | how it shows up | diagnosis / outcome |
 |---|---|---|
-| assimp-py sem animações | spike não lista clipes | cai para a rota A' (export do navegador) |
-| ordem de rotação trocada | mão espelhada, ou girando no eixo errado | comparar foto com a web na mesma pose |
-| `PreRotation` mal composta | dedos torcidos **já na pose de bind** | renderizar sem animação: se a bind sai torta, é a composição |
-| normais invertidas | mão escura, iluminação ao contrário | desligar `cull_face` e ver se melhora |
-| GPU híbrida cai na Intel | fps baixo sem motivo | o `GL_RENDERER` impresso no arranque diz |
-| FBO offscreen sem sessão gráfica | `--foto` falha no shell | usar a janela real e capturar um quadro |
+| assimp-py with no animations | spike lists no clips | **happened, and worse**: also no bones/weights → route B (not A') |
+| swapped rotation order | mirrored hand, or spinning on the wrong axis | not observed; ORIENT+centering come pre-baked from three.js (Step 3) |
+| `PreRotation` composed wrong | fingers twisted already in the bind pose | avoided by construction: the hierarchy is never recomposed in Python |
+| inverted normals | dark hand, inverted-looking lighting | not observed across the 4 poses; `CULL_FACE` left off as a precaution |
+| hybrid GPU falls back to Intel | low fps for no obvious reason | happened (opened on Intel), but fps came out **high**, not low — vsync that doesn't cap (see Verification 3) |
+| offscreen FBO with no graphics session | `--foto` fails in the shell | avoided: `--foto` uses the real (visible) window, not an offscreen FBO |
 
-## Fora de escopo
+## Out of scope
 
-Não mexer no deck do outro repositório, não remover a versão web, não tocar em
-`src/myoControlsHand.py`. O modo desktop é adição.
+Don't touch the other repository's deck, don't remove the web version, don't
+touch `src/myoControlsHand.py`. Desktop mode is an addition.
