@@ -41,9 +41,18 @@
                      '#fb923c', '#fb7185', '#f472b6', '#a78bfa'];
 
   // ---------- estado ----------
+  /* pose "inicial" (roll,pitch,yaw): dorso da mao pra cima / palma pra
+     baixo, dedos esticados pra longe da camera — medido tentando varias
+     combinacoes com os eixos de mundo desenhados (AxesHelper) e olhando o
+     "apontando" (o dedo reto deixa a direcao inequivoca) e o "punho
+     fechado" (os nos dos dedos pra cima confirmam palma pra baixo). Tecla
+     espaco recalibra pra isto — ver ESPACO abaixo. */
+  var EULER_INICIAL = [0, -90, 0];
+
   var st = {
     peso: [1, 0, 0, 0], alvo: [1, 0, 0, 0], idx: 0,
-    euler: [0, 0, 0], eulerAlvo: [0, 0, 0],
+    euler: EULER_INICIAL.slice(), eulerAlvo: EULER_INICIAL.slice(),
+    eulerBruto: [0, 0, 0], offsetCalib: [0, 0, 0],
     rms: null, fonte: 'off', fs: 0, classe: null,
     seguirImu: true, girar: false,
     ws: null, ultimoDado: 0, ultimoQuadro: 0,
@@ -428,9 +437,27 @@
       el.botoes.appendChild(b);
     });
     document.addEventListener('keydown', function (ev) {
+      if (ev.key === ' ' || ev.code === 'Space') {
+        ev.preventDefault();
+        recalibrar();
+        return;
+      }
       var n = parseInt(ev.key, 10);
       if (n >= 1 && n <= POSES.length) porPose(n - 1, true);
     });
+  }
+
+  /* espaco: a orientacao ATUAL do braço passa a valer como EULER_INICIAL
+     (dorso pra cima / palma pra baixo / dedos pra longe da camera) — a
+     mao pula pra essa pose na hora e, dali em diante, os movimentos do
+     braço continuam sendo lidos normalmente, só que relativos a este novo
+     zero. Existe porque o Myo nao tem bussola: o "zero" dele é arbitrário
+     a cada conexão nova, então sem isto toda sessão começa numa pose
+     estranha diferente. */
+  function recalibrar() {
+    st.offsetCalib = st.eulerBruto.map(function (v, i) { return v - EULER_INICIAL[i]; });
+    st.eulerAlvo = EULER_INICIAL.slice();
+    st.euler = EULER_INICIAL.slice();
   }
 
   fetch('gestos.json').then(function (r) {
@@ -556,7 +583,8 @@
       if (d.fs) st.fs = +d.fs;
       if (d.gesture !== undefined) st.classe = +d.gesture;
       if (d.euler && d.euler.length >= 3) {
-        st.eulerAlvo = [+d.euler[0], +d.euler[1], +d.euler[2]];
+        st.eulerBruto = [+d.euler[0], +d.euler[1], +d.euler[2]];
+        st.eulerAlvo = st.eulerBruto.map(function (v, i) { return v - st.offsetCalib[i]; });
       }
       if (d.rms && d.rms.length) st.rms = d.rms.map(Number);
       if (d.name && POSES) {
@@ -652,7 +680,7 @@
     var ke = 1 - Math.exp(-dt / 0.12);
     var segue = st.seguirImu && (st.fonte === 'myo' || st.fonte === 'sim');
     for (i = 0; i < 3; i++) {
-      var alvoEuler = segue ? st.eulerAlvo[i] : 0;
+      var alvoEuler = segue ? st.eulerAlvo[i] : EULER_INICIAL[i];
       var deltaEuler = alvoEuler - st.euler[i];
       // caminho mais curto: sem isto, um alvo que embrulhou em ±180° (ou
       // que a ponte manda sem o acumulador do feed.py) faz a mao girar pelo
