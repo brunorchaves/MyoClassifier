@@ -1,66 +1,79 @@
 # MyoClassifier
 
-## Overview
-MyoClassifier is a project designed to acquire EMG signals from the Myo Armband and classify hand gestures in real time using various machine learning techniques. Built extensively on the Pyomyo library for signal acquisition and processing, the system translates muscle activity into precise gesture predictions. These predictions control a 3D hand model in Unity, replicating the user's movements. Additionally, the system collects and processes IMU data from the Myo Armband to accurately track and adjust the 3D hand's orientation.
-
-## Demonstration
+Real-time hand gesture recognition from EMG signals, streamed straight into a 3D hand that mirrors your movement.
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=VIDEO_ID" target="_blank">
-    <img src="https://img.youtube.com/vi/VIDEO_ID/hqdefault.jpg" alt="Demo Video" width="60%">
-  </a>
+  <img src="demoimage.jpeg" alt="Myo armband driving a 3D hand" width="70%">
 </p>
+
+MyoClassifier reads muscle activity from a **Myo Armband**, classifies it into hand gestures with machine learning, and drives a **3D hand model** that reproduces your movement live — orientation from the armband's IMU, pose from the classifier. Signal acquisition is built on [`pyomyo`](https://github.com/akshaybahadur21/pyomyo).
+
+## Demo
 
 <p align="center">
-  <em>Click on the image to watch the MyoClassifier demo on YouTube.</em>
+  <img src="emgMyo_demo.gif" alt="MyoClassifier demo: EMG gestures driving the 3D hand" width="55%">
 </p>
 
+## How it works
+
+```
+Myo Armband  --EMG + IMU-->  feed.py (pyomyo, 1-NN classifier)  --gesture + orientation-->  3D hand
+```
+
+The 3D hand used to be a Unity build; it's now [`hand3d/`](hand3d/), a browser/desktop renderer built on three.js — no editor, no build, one command:
+
+```bash
+cd hand3d
+python run.py
+```
+
+See [`hand3d/README.md`](hand3d/README.md) for the full breakdown (browser mode, desktop/no-browser mode, simulation mode without a Myo, and the protocol it speaks).
 
 ## Project Structure
-The project is organized into the following directories and files:
 
-- **data/**: Contains the datasets used for training and testing the models.
-- **notebooks/**: Jupyter notebooks for data exploration, preprocessing, and model training.
-- **src/**: Source code for the project, including data processing, feature extraction, and model implementation.
-  - **data_processing/**: Scripts for loading and preprocessing the EMG data.
-  - **feature_extraction/**: Scripts for extracting features from the EMG signals.
-  - **models/**: Implementation of various machine learning models used for classification.
-  - **utils/**: Utility functions and helper scripts.
-  - **examples/**: Example scripts and notebooks adapted from the [`pyomyo`](https://github.com/akshaybahadur21/pyomyo) repository to demonstrate usage and integration.
-- **tests/**: Unit tests for the project's codebase.
-- **README.md**: Project documentation and overview.
+- **[hand3d/](hand3d/)** — the current 3D hand renderer (browser + desktop), and the bridge that feeds it live gesture/orientation data.
+- **[src/](src/)** — core pipeline: EMG data processing, feature extraction, and the classifiers.
+  - **[src/data/](src/data/)** — recorded EMG training samples.
+  - **[src/emgGestureTrainer.py](src/emgGestureTrainer.py)** — record new gesture samples from the armband.
+  - **[src/myoControlsHand.py](src/myoControlsHand.py)** — the original Myo → Unity control script (superseded by `hand3d/bridge.py`, still compatible with it).
+- **[examples/](examples/)** — scripts adapted from [`pyomyo`](https://github.com/akshaybahadur21/pyomyo) demonstrating raw usage: EMG/IMU streaming, live classifiers, multithreading.
+- **[myTry/](myTry/)** — experiments with feature extraction and a trained k-NN classifier.
 
 ## Getting Started
-To get started with the MyoClassifier project, follow these steps:
 
-1. **Clone the repository**:
+1. **Clone the repository**
    ```bash
    git clone https://github.com/yourusername/MyoClassifier.git
    cd MyoClassifier
    ```
 
-2. **Install dependencies**:
+2. **Install dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Run the notebooks**:
-   Open the Jupyter notebooks in the `notebooks/` directory to explore the data and train the models.
-
-4. **Run the tests**:
+3. **Run the 3D hand demo**
    ```bash
-   pytest tests/
+   cd hand3d
+   python run.py
+   ```
+   No Myo on hand? `python run.py --sim` fakes the gesture and orientation so you can try the renderer on its own.
+
+4. **Train your own gestures**
+
+   The bundled classifier only has training data for 3 of its 4 gestures (see [`hand3d/README.md`](hand3d/README.md#-one-gesture-is-missing-training-data)). Record more with:
+   ```bash
+   python src/emgGestureTrainer.py
    ```
 
-## Usage
-The main scripts for data processing, feature extraction, and model training can be found in the `src/` directory. You can run these scripts individually or integrate them into your own workflow.
+## Legacy: the Unity project
 
-## Unity Project
-You can download the Unity project from the following link:
-[Unity Project Download](https://drive.google.com/file/d/11xFDDMwNdO0Dge3Cj2RfmiCvqYhKNMiJ/view?usp=sharing)
+The original renderer was a Unity scene driven over TCP by `src/myoControlsHand.py`. `hand3d/bridge.py` speaks the exact same protocol on the same port, so that script still works unchanged if you'd rather use Unity: [Unity Project Download](https://drive.google.com/file/d/11xFDDMwNdO0Dge3Cj2RfmiCvqYhKNMiJ/view?usp=sharing).
 
 ## Contributing
+
 Contributions are welcome! Please feel free to submit a pull request or open an issue if you have any suggestions or improvements.
 
 ## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+
+This project is licensed under the MIT License.
