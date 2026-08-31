@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyoClassifier — painel</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07090f; --bg2: #0c1119; --bg3: #0e131e;
+    --linha: rgba(150,180,230,.16); --linha2: rgba(150,180,230,.32);
+    --ink: #e9eef8; --ink2: #b9c4d8; --fraco: #7d8ba5; --apagado: #5a6579;
+    --ciano: #22d3ee; --teal: #2dd4bf; --verde: #a3e635; --ambar: #fbbf24;
+    --laranja: #fb923c; --rosa: #f472b6; --vermelho: #fb7185; --violeta: #a78bfa;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --disp: "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100vh; overflow: hidden; background: var(--bg);
+    color: var(--ink); font: 14px/1.5 var(--disp); -webkit-font-smoothing: antialiased;
+  }
+
+  #fundo {
+    position: fixed; inset: 0; z-index: -2;
+    background:
+      radial-gradient(1100px 650px at 10% -10%, rgba(34,211,238,.10), transparent 60%),
+      radial-gradient(950px 640px at 96% 108%, rgba(244,114,182,.08), transparent 60%),
+      var(--bg);
+  }
+  #malha {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .55;
+    background-image:
+      linear-gradient(var(--linha) 1px, transparent 1px),
+      linear-gradient(90deg, var(--linha) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(120% 100% at 50% 0%, #000 25%, transparent 82%);
+    mask-image: radial-gradient(120% 100% at 50% 0%, #000 25%, transparent 82%);
+  }
+
+  #dash {
+    position: relative; height: 100vh; padding: 14px 18px 16px;
+    display: grid; grid-template-rows: 56px 1fr 130px; gap: 14px;
+  }
+
+  /* ---------- topo ---------- */
+  header { display: flex; align-items: center; justify-content: space-between; flex: none; }
+  .marca { display: flex; align-items: center; gap: 12px; }
+  .marca .logo {
+    width: 36px; height: 36px; border-radius: 10px; flex: none;
+    border: 1px solid var(--linha2);
+    background: linear-gradient(135deg, rgba(34,211,238,.20), rgba(244,114,182,.10));
+    display: grid; place-items: center; font-family: var(--mono); font-weight: 700;
+    font-size: 15px; color: var(--ciano);
+  }
+  .marca h1 { font-size: 16.5px; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+  .marca h1 span { color: var(--ciano); }
+  .marca .sub {
+    font: 10.5px var(--mono); color: var(--fraco); letter-spacing: .1em; text-transform: uppercase;
+  }
+  .topo-dir { display: flex; align-items: center; gap: 10px; flex: none; }
+  .pill {
+    display: flex; align-items: center; gap: 9px; background: rgba(255,255,255,.035);
+    border: 1px solid var(--linha); border-radius: 999px; padding: 7px 14px;
+    font: 11px var(--mono); color: var(--fraco); white-space: nowrap;
+  }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--apagado); display: inline-block; flex: none; }
+  .pill.vivo i { background: var(--verde); box-shadow: 0 0 9px var(--verde); }
+  .pill.sim i { background: var(--ambar); }
+  .pill.off i { background: var(--vermelho); }
+  #relogio { font: 12px var(--mono); color: var(--ink2); min-width: 66px; text-align: right; }
+
+  /* ---------- painel generico ---------- */
+  .painel {
+    background: linear-gradient(165deg, var(--bg2) 0%, var(--bg) 78%);
+    border: 1px solid var(--linha); border-radius: 14px;
+    display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden;
+    box-shadow: 0 30px 90px rgba(0,0,0,.45);
+  }
+  .painel .cab {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 16px 10px; flex: none;
+  }
+  .painel .cab h2 {
+    font: 600 11px var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fraco); margin: 0; display: flex; align-items: center; gap: 9px;
+  }
+  .painel .cab h2::before { content: ""; width: 18px; height: 1px; background: var(--ciano); opacity: .75; flex: none; }
+  .painel .cab .info { font: 11px var(--mono); color: var(--apagado); }
+  .painel .cab a.abrir {
+    font: 10.5px var(--mono); color: var(--fraco); text-decoration: none;
+    border: 1px solid var(--linha); border-radius: 6px; padding: 4px 8px; letter-spacing: .04em;
+  }
+  .painel .cab a.abrir:hover { color: var(--ciano); border-color: var(--ciano); }
+
+  /* ---------- corpo principal ---------- */
+  main { display: grid; grid-template-columns: 1fr 820px; gap: 14px; min-height: 0; }
+
+  #emgPanel .corpo { flex: 1; min-height: 0; position: relative; padding: 0 6px 12px 16px; }
+  #emgCanvas { width: 100%; height: 100%; display: block; }
+  #emgLegenda {
+    display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 16px 12px;
+    font: 10.5px var(--mono); color: var(--muted, var(--fraco)); flex: none;
+  }
+  #emgLegenda span { display: inline-flex; align-items: center; gap: 6px; color: var(--fraco); }
+  #emgLegenda i { width: 13px; height: 2.5px; border-radius: 2px; display: inline-block; }
+
+  #maoPanel { padding: 0; }
+  #maoPanel .corpo { flex: 1; min-height: 0; position: relative; background: var(--bg3); }
+  #maoPanel iframe { border: 0; width: 100%; height: 100%; display: block; }
+
+  /* ---------- rodape: cartoes de info ---------- */
+  footer { display: grid; grid-template-columns: 1.1fr 1fr 1fr 1.2fr; gap: 14px; min-height: 0; }
+  .cartao {
+    background: linear-gradient(165deg, var(--bg2) 0%, var(--bg) 85%);
+    border: 1px solid var(--linha); border-radius: 14px;
+    padding: 12px 16px 13px; display: flex; flex-direction: column; gap: 7px; min-height: 0;
+  }
+  .cartao h3 {
+    font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fraco); margin: 0; display: flex; align-items: center; gap: 8px; flex: none;
+  }
+  .cartao h3::before { content: ""; width: 14px; height: 1px; background: var(--ciano); opacity: .7; flex: none; }
+
+  /* status */
+  #cStatus .linha1 { display: flex; align-items: baseline; gap: 8px; }
+  #cStatus .rotulo { font-size: 16.5px; font-weight: 600; }
+  #cStatus .leituras {
+    display: flex; gap: 16px; margin-top: auto; font: 11px var(--mono); color: var(--ink2);
+  }
+  #cStatus .leituras b { color: var(--ambar); font-weight: 500; }
+
+  /* gesto */
+  #cGesto .nome { font-size: 24px; font-weight: 600; letter-spacing: -.01em; line-height: 1.05; }
+  #cGesto .classe { font: 11px var(--mono); color: var(--apagado); }
+  #cGesto .barrinhas { display: flex; gap: 3px; margin-top: auto; align-items: flex-end; height: 22px; }
+  #cGesto .barrinhas i { flex: 1; border-radius: 2px 2px 0 0; background: var(--linha2); transition: height .12s linear, background .12s linear; }
+
+  /* imu */
+  #cImu { flex-direction: row; align-items: center; gap: 14px; }
+  #cImu .col { display: flex; flex-direction: column; gap: 7px; min-width: 0; flex: 1; }
+  .imu-palco { width: 66px; height: 66px; perspective: 320px; flex: none; margin-top: 2px; }
+  .imu-cubo { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; }
+  .imu-cubo .f {
+    position: absolute; width: 66px; height: 66px;
+    border: 1px solid rgba(34,211,238,.55); background: rgba(34,211,238,.10);
+  }
+  .imu-cubo .f.topo { background: rgba(163,230,53,.18); border-color: rgba(163,230,53,.6); }
+  .imu-cubo .f.frente { background: rgba(244,114,182,.14); border-color: rgba(244,114,182,.55); }
+  .imu-cubo .f.frente { transform: translateZ(33px); }
+  .imu-cubo .f.tras { transform: rotateY(180deg) translateZ(33px); }
+  .imu-cubo .f.direita { transform: rotateY(90deg) translateZ(33px); }
+  .imu-cubo .f.esquerda { transform: rotateY(-90deg) translateZ(33px); }
+  .imu-cubo .f.topo { transform: rotateX(90deg) translateZ(33px); }
+  .imu-cubo .f.base { transform: rotateX(-90deg) translateZ(33px); }
+  #cImu .eixo { display: flex; justify-content: space-between; font: 10.5px var(--mono); color: var(--fraco); }
+  #cImu .eixo b { color: var(--ink2); font-weight: 500; }
+
+  /* sessao */
+  #cSessao .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-top: 2px; }
+  #cSessao .stat .v { font-family: var(--mono); font-size: 18px; font-weight: 600; color: var(--ink); line-height: 1; }
+  #cSessao .stat .k { font-size: 10px; color: var(--muted, var(--fraco)); margin-top: 3px; letter-spacing: .04em; text-transform: uppercase; }
+
+  ::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body>
+
+<div id="fundo"></div>
+<div id="malha"></div>
+
+<div id="dash">
+
+  <header>
+    <div class="marca">
+      <div class="logo">M</div>
+      <div>
+        <h1>MyoClassifier — <span>painel</span></h1>
+        <div class="sub">EMG · IMU · classificação em tempo real</div>
+      </div>
+    </div>
+    <div class="topo-dir">
+      <div class="pill off" id="pFonte"><i></i><span>procurando a ponte…</span></div>
+      <div id="relogio">00:00:00</div>
+    </div>
+  </header>
+
+  <main>
+    <section class="painel" id="emgPanel">
+      <div class="cab">
+        <h2>EMG · 8 canais ao vivo</h2>
+        <div class="info" id="emgInfo">— Hz</div>
+      </div>
+      <div class="corpo"><canvas id="emgCanvas"></canvas></div>
+      <div id="emgLegenda"></div>
+    </section>
+
+    <section class="painel" id="maoPanel">
+      <div class="cab">
+        <h2>mão 3D</h2>
+        <a class="abrir" href="index.html" target="_blank" rel="noopener">abrir só ela ↗</a>
+      </div>
+      <div class="corpo"><iframe src="index.html" title="mão 3D"></iframe></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="cartao" id="cStatus">
+      <h3>fonte do sinal</h3>
+      <div class="linha1"><span class="rotulo" id="sRotulo">sem ponte</span></div>
+      <div class="leituras">
+        <span>taxa <b id="sFs">—</b></span>
+        <span>latência <b id="sLat">—</b></span>
+        <span>lote <b id="sLote">—</b></span>
+      </div>
+    </div>
+
+    <div class="cartao" id="cGesto">
+      <h3>gesto classificado</h3>
+      <div class="nome" id="gNome">—</div>
+      <div class="classe" id="gClasse">classe —</div>
+      <div class="barrinhas" id="gBarras"></div>
+    </div>
+
+    <div class="cartao" id="cImu">
+      <div class="imu-palco"><div class="imu-cubo" id="imuCubo">
+        <div class="f frente"></div><div class="f tras"></div>
+        <div class="f direita"></div><div class="f esquerda"></div>
+        <div class="f topo"></div><div class="f base"></div>
+      </div></div>
+      <div class="col">
+        <h3 style="margin-bottom:0">orientação (IMU)</h3>
+        <div class="eixo"><span>roll</span><b id="iRoll">0°</b></div>
+        <div class="eixo"><span>pitch</span><b id="iPitch">0°</b></div>
+        <div class="eixo"><span>yaw</span><b id="iYaw">0°</b></div>
+      </div>
+    </div>
+
+    <div class="cartao" id="cSessao">
+      <h3>sessão</h3>
+      <div class="grid2">
+        <div class="stat"><div class="v" id="stTempo">00:00</div><div class="k">no ar</div></div>
+        <div class="stat"><div class="v" id="stAmostras">0</div><div class="k">amostras emg</div></div>
+        <div class="stat"><div class="v" id="stPacotes">0</div><div class="k">pacotes/s</div></div>
+        <div class="stat"><div class="v" id="stPico">0</div><div class="k">pico (canal)</div></div>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script src="dashboard.js"></script>
+</body>
+</html>

@@ -231,6 +231,8 @@ def main():
     ap.add_argument("--sim", action="store_true", help="sem bracelete: ponte em simulacao")
     ap.add_argument("--sem-myo", action="store_true", help="nao sobe o alimentador")
     ap.add_argument("--sem-navegador", action="store_true")
+    ap.add_argument("--painel", action="store_true",
+                    help="abre dashboard.html (EMG + IMU + mao 3D) em vez da pagina simples")
     a = ap.parse_args()
 
     print()
@@ -292,7 +294,7 @@ def main():
     if not esperar_porta(a.porta, 12, "o servidor da pagina"):
         derrubar()
         return 1
-    url = "http://127.0.0.1:%d/" % a.porta
+    url = "http://127.0.0.1:%d/%s" % (a.porta, "dashboard.html" if a.painel else "")
     try:
         urllib.request.urlopen(url, timeout=4).read(64)
     except Exception as e:
