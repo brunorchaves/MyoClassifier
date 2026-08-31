@@ -291,8 +291,14 @@
       });
     });
 
-    malha.skeleton.update();
+    // ORDEM IMPORTA: updateMatrixWorld tem que vir antes de skeleton.update().
+    // Skeleton.update() so LE bone.matrixWorld (nao recalcula nada) — sem
+    // isto aqui antes, ele usa a matrizWorld de QUALQUER pose anterior que
+    // tenha rodado por ultimo, nao os quaternions que acabamos de setar.
+    // (bug real: sem isto, cada pose custom saia com a forma da anterior —
+    // ThumbsUp saia igual a Pointing, Peace igual ao ThumbsUp certo, etc.)
     cena.updateMatrixWorld(true);
+    malha.skeleton.update();
   }
 
   /* Calcula {position_f32, normal_f32} de uma pose custom, pronto pra
