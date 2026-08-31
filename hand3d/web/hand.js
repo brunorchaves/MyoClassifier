@@ -128,7 +128,7 @@
      e leva pro espaco "mundo com pivot zerado" via matrizMundo (ver
      acharMatrizMundo). Reutilizado por exportarPoses() e por
      criarPoseCustom(). */
-  function skinarPoseAtual(malha, matrizMundo) {
+  function skinarPoseAtual(malha, matrizMundo, empurrar) {
     var geo = malha.geometry;
     var pos = geo.attributes.position;
     var nrm = geo.attributes.normal;
@@ -136,6 +136,12 @@
     var skinWt = geo.attributes.skinWeight;
     var N = pos.count;
     var bm = malha.skeleton.boneMatrices;
+
+    // empurrar: [{indicesOsso: [i,...], vetor: Vector3}] — desloca depois
+    // do skinning normal, proporcional ao peso total nesses ossos (0 na
+    // base do dedo, ate 1 na ponta). Nao gira nada, so translada — sem
+    // costura de junta, porque nao depende de peso pintado pra flexao.
+    empurrar = empurrar || [];
 
     var bindPos = new THREE.Vector4();
     var bindNrm = new THREE.Vector4();
@@ -170,6 +176,19 @@
       // centralizacao e o ORIENT, fixos, calculados uma vez em acharMatrizMundo
       acumPos.applyMatrix4(matrizMundo);
       acumNrm.applyMatrix4(matrizMundo);
+      for (var e = 0; e < empurrar.length; e++) {
+        var pesoDedo = 0;
+        for (var j2 = 0; j2 < 4; j2++) {
+          if (empurrar[e].indicesOsso.indexOf(comp(skinIdx, v, j2)) >= 0) {
+            pesoDedo += comp(skinWt, v, j2);
+          }
+        }
+        if (pesoDedo) {
+          acumPos.x += empurrar[e].vetor.x * pesoDedo;
+          acumPos.y += empurrar[e].vetor.y * pesoDedo;
+          acumPos.z += empurrar[e].vetor.z * pesoDedo;
+        }
+      }
       var nlen = Math.hypot(acumNrm.x, acumNrm.y, acumNrm.z) || 1;
       positions[v * 3] = acumPos.x; positions[v * 3 + 1] = acumPos.y; positions[v * 3 + 2] = acumPos.z;
       normals[v * 3] = acumNrm.x / nlen; normals[v * 3 + 1] = acumNrm.y / nlen; normals[v * 3 + 2] = acumNrm.z / nlen;
@@ -229,8 +248,8 @@
     EXTRAS.forEach(function (ex) {
       if (erroExtra) return;
       try {
-        montarPoseCustom(malha, ex.curvas, ex.poseAberta || 'Relaxed');
-        out.poses[ex.clip] = skinarPoseAtual(malha, matrizMundo);
+        var empurrar = montarPoseCustom(malha, ex.curvas, ex.poseAberta || 'Relaxed');
+        out.poses[ex.clip] = skinarPoseAtual(malha, matrizMundo, empurrar);
       } catch (e) {
         erroExtra = { erro: 'extra "' + ex.clip + '": ' + e.message };
       }
@@ -254,11 +273,21 @@
      esticado de verdade fica mais parecido com "spock" que com "Relaxed"),
      passe um objeto em vez de numero: { de: 'spock', para: 'fist', t: 0 }.
      Ossos que nao sao de dedo (metacarpos etc.) ficam em `poseAberta` —
-     eles nunca mudam entre as 4 poses conhecidas mesmo. */
+     eles nunca mudam entre as 4 poses conhecidas mesmo.
+
+     `empurrar: [x,y,z]` no spec de um dedo desloca ele pro lado depois do
+     skinning (nao gira osso nenhum) — devolvido separado, pra
+     skinarPoseAtual aplicar. Girar um osso pra separar dedo do vizinho
+     (abducao) sai com costura feia: o skinning so foi pintado pra flexao,
+     nunca pra esse eixo, em nenhuma das 4 poses reais. Empurrar os
+     vertices depois evita isso — e so translacao, sem depender de peso
+     pintado pra nada. Devolve os ossos da cadeia como INDICE (a mesma
+     ordem de malha.skeleton.bones, que e o que skinIndex guarda). */
   function montarPoseCustom(malha, curvas, poseAberta) {
     var ossos = malha.skeleton.bones;
     var porNome = {};
-    ossos.forEach(function (b) { porNome[b.name] = b; });
+    var indicePorNome = {};
+    ossos.forEach(function (b, i) { porNome[b.name] = b; indicePorNome[b.name] = i; });
 
     var cacheQuats = {};
     function capturarPose(nomeClipe) {
@@ -276,6 +305,7 @@
     var base = capturarPose(poseAberta);
     ossos.forEach(function (b) { b.quaternion.copy(base[b.name]); });
 
+    var empurrar = [];
     Object.keys(curvas).forEach(function (dedo) {
       var cadeia = DEDOS[dedo];
       if (!cadeia) throw new Error('dedo desconhecido: ' + dedo + ' (use ' + Object.keys(DEDOS).join(', ') + ')');
@@ -289,20 +319,11 @@
         if (!b) return;
         b.quaternion.copy(qDe[nomeOsso]).slerp(qPara[nomeOsso], t);
       });
-      // abducao extra (separar/juntar o dedo do vizinho) — gira a FALANGE
-      // PROXIMAL (segundo osso da cadeia — o primeiro e o metacarpo, que
-      // nunca e animado em nenhuma das 4 poses e tem a malha da palma
-      // colada nele; girar ele em vez do proximal estica a palma toda e
-      // faz um bulge horrivel) no eixo Z local dela. Achado por tentativa:
-      // Z move o dedo pro lado, X curva/estica, Y torce em volta do
-      // proprio comprimento. Sem isto, indicador e medio saem quase
-      // colados no peace sign (a spock separa o par 2-3 do par 4-5, mas
-      // nao afasta indicador do medio dentro do mesmo par).
-      if (typeof spec === 'object' && spec.girarZ && cadeia.length > 1) {
-        var ossoProximal = porNome[cadeia[1]];
-        var qZ = new THREE.Quaternion().setFromAxisAngle(
-          new THREE.Vector3(0, 0, 1), spec.girarZ * Math.PI / 180);
-        ossoProximal.quaternion.multiply(qZ);
+      if (typeof spec === 'object' && spec.empurrar) {
+        empurrar.push({
+          indicesOsso: cadeia.map(function (n) { return indicePorNome[n]; }),
+          vetor: new THREE.Vector3(spec.empurrar[0], spec.empurrar[1], spec.empurrar[2])
+        });
       }
     });
 
@@ -314,6 +335,7 @@
     // ThumbsUp saia igual a Pointing, Peace igual ao ThumbsUp certo, etc.)
     cena.updateMatrixWorld(true);
     malha.skeleton.update();
+    return empurrar;
   }
 
   /* Calcula {position_f32, normal_f32} de uma pose custom, pronto pra
@@ -329,8 +351,8 @@
     var idxOriginal = st.idx;
     var matrizMundo = acharMatrizMundo(malha);
 
-    montarPoseCustom(malha, curvas, poseAberta || 'Relaxed');
-    var resultado = skinarPoseAtual(malha, matrizMundo);
+    var empurrar = montarPoseCustom(malha, curvas, poseAberta || 'Relaxed');
+    var resultado = skinarPoseAtual(malha, matrizMundo, empurrar);
 
     // devolve o mixer ao estado visual de antes (o loop de render volta a
     // escrever nos ossos a cada quadro, entao isto so evita 1 quadro torto)

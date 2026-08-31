@@ -58,7 +58,11 @@
           "de": "spock",
           "para": "fist",
           "t": 0,
-          "girarZ": -20
+          "empurrar": [
+            0,
+            20,
+            0
+          ]
         },
         "medio": {
           "de": "spock",

@@ -238,6 +238,40 @@ says "use `spock`'s thumb rotation instead" (`spock` happens to hold the
 thumb straighter than `Relaxed` does). Any of the 4 real poses can be used as
 a `de`/`para` reference for any finger.
 
+### Separating two fingers that sit close together
+
+Curling alone isn't enough for something like a peace sign: index and middle
+sit close together in every one of the 4 real poses (`spock` spreads the
+*pair* index+middle away from the *pair* ring+pinky, but doesn't spread index
+away from middle within that pair). The fix is **not** to rotate a bone
+further apart — every joint's skin weights were painted for bending, never
+for a sideways swing, and forcing that rotation shows up as an ugly seam or a
+swollen "giant finger" right at the joint (this shipped broken that way for a
+few iterations before landing on the approach below).
+
+Instead, `empurrar: [x, y, z]` in a finger's spec nudges that finger's
+*already-skinned vertices* sideways by a fixed offset, scaled by how much
+skin weight each vertex has on that finger's bones — nothing at the palm,
+the full offset at the fingertip. It's a plain translation, not a rotation,
+so there's no joint to tear:
+
+```json
+"Peace": {
+  "indicador": { "de": "spock", "para": "fist", "t": 0, "empurrar": [0, 20, 0] },
+  "medio": { "de": "spock", "para": "fist", "t": 0 },
+  "anelar": 1, "minimo": 1, "polegar": 1
+}
+```
+
+The `[x, y, z]` is in the same world space the exported vertices already sit
+in — there's no shortcut to picking the right numbers other than exporting
+and looking at it from a couple of angles (`python desktop.py --pose Peace
+--foto out.png`, then again from a rotated camera). `previsualizarPoseCustom`
+(below) does **not** apply `empurrar` — it drives three.js's own GPU skinning
+live, and the push only exists in the exported/baked path
+(`exportarPoses`/`criarPoseCustom`), so use it to dial in the curl amounts
+first, then check `empurrar` in an actual export.
+
 ### Previewing a pose before committing to it
 
 Open the page (`python serve.py`) and, from the browser console:
@@ -254,8 +288,8 @@ window.pararPrevisualizacao()
 
 Fingers that are anatomically close together (index+middle, like in a peace
 sign) can look like a single wider finger from some camera angles even when
-both are correctly extended — rotate the view before concluding a pose is
-wrong.
+both are correctly extended — rotate the view before reaching for
+`empurrar` above.
 
 ### Adding it for real
 
