@@ -42,12 +42,19 @@
 
   // ---------- estado ----------
   /* pose "inicial" (roll,pitch,yaw): dorso da mao pra cima / palma pra
-     baixo, dedos esticados pra longe da camera — medido tentando varias
-     combinacoes com os eixos de mundo desenhados (AxesHelper) e olhando o
-     "apontando" (o dedo reto deixa a direcao inequivoca) e o "punho
-     fechado" (os nos dos dedos pra cima confirmam palma pra baixo). Tecla
-     espaco recalibra pra isto — ver ESPACO abaixo. */
-  var EULER_INICIAL = [0, -90, 0];
+     baixo, dedos esticados pra LONGE da camera — visao de primeira
+     pessoa, como se a pessoa estivesse olhando a propria mao por tras,
+     enfiando os dedos na tela (nao apontando pra fora, pra quem olha).
+     Achado medindo de verdade (nao no olho, a 1a tentativa saiu invertida):
+     o vetor pulso->ponta do dedo medio contra a direcao de visada da
+     camera (produto escalar perto de +1 = dedo alinhado com "pra dentro"),
+     e a normal da palma (dedo indicador x dedo minimo) contra "pra baixo"
+     (perto de +1 = palma pra baixo). roll=180 + pitch=-90 poe a palma pra
+     baixo com os dedos apontando pro fundo da cena, e yaw=-CAM.az (o
+     azimute da propria camera, com o sinal oposto) alinha esse "fundo"
+     com o eixo de visada exato em vez de um lado. Tecla espaco recalibra
+     pra isto — ver ESPACO abaixo. */
+  var EULER_INICIAL = [180, -90, -CAM.az];
 
   var st = {
     peso: [1, 0, 0, 0], alvo: [1, 0, 0, 0], idx: 0,
