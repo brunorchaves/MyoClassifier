@@ -65,7 +65,10 @@ def carregar_gestos():
     with open(caminho, encoding="utf-8") as f:
         d = json.load(f)
     padrao = d["classe_desconhecida"]
-    mapa = {item["classe"]: item["clip"] for item in d["ordem"]}
+    # extras (poses desenhadas por osso, sem clipe no FBX) tambem entram no
+    # mapa classe->nome — nunca vem do classificador de verdade (sem dado
+    # de treino), mas nao faz mal a ponte saber o nome se algum dia vier
+    mapa = {item["classe"]: item["clip"] for item in d["ordem"] + d.get("extras", [])}
     return mapa, padrao
 
 

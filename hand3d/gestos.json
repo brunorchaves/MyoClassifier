@@ -6,5 +6,36 @@
     { "classe": 3, "clip": "spock", "nome": "dedos separados", "cor": "#a78bfa" },
     { "classe": 4, "clip": "Pointing", "nome": "apontando", "cor": "#fbbf24" }
   ],
-  "classe_desconhecida": "Relaxed"
+  "classe_desconhecida": "Relaxed",
+
+  "_comentario_extras": "poses desenhadas por osso (nao sao clipes do FBX — ver README.md, secao 'Creating new poses'). Sem dado de treino no classificador, so manual/tecla. So entram no cache do modo desktop (exportarPoses() as gera via criarPoseCustom); a pagina web NAO monta botao pra elas, pra nao arriscar o clip-matching do FBXLoader (que so conhece os 4 de 'ordem').",
+  "extras": [
+    {
+      "classe": 5, "clip": "ThumbsUp", "nome": "polegar pra cima", "cor": "#f472b6",
+      "poseAberta": "Relaxed",
+      "curvas": {
+        "polegar": { "de": "spock", "para": "fist", "t": 0 },
+        "indicador": 1, "medio": 1, "anelar": 1, "minimo": 1
+      }
+    },
+    {
+      "classe": 6, "clip": "Peace", "nome": "paz e amor", "cor": "#38bdf8",
+      "poseAberta": "Relaxed",
+      "curvas": {
+        "indicador": { "de": "spock", "para": "fist", "t": 0 },
+        "medio": { "de": "spock", "para": "fist", "t": 0 },
+        "anelar": 1, "minimo": 1,
+        "polegar": 1
+      }
+    },
+    {
+      "classe": 7, "clip": "RockOn", "nome": "rock and roll", "cor": "#fb7185",
+      "poseAberta": "Relaxed",
+      "curvas": {
+        "indicador": 0, "minimo": 0,
+        "medio": 1, "anelar": 1,
+        "polegar": 1
+      }
+    }
+  ]
 }

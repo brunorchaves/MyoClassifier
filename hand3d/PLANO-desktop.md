@@ -8,6 +8,12 @@
 > This document remains as a record of the research, the measurements, and
 > the decisions (mainly route B, decided in Step 0) — useful if the FBX ever
 > gets swapped out or the cache needs to be regenerated.
+>
+> **Update after this was written**: the app grew past the FBX's original 4
+> poses — `gestos.json`/`desktop.py` now handle any number of poses, and 3
+> more (`ThumbsUp`, `Peace`, `RockOn`) were added by posing the skeleton
+> directly in `web/hand.js`, no 3D authoring tool needed. See the README's
+> ["Creating new poses"](README.md#creating-new-poses) section.
 
 ## Context
 

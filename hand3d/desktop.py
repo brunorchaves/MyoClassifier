@@ -15,7 +15,7 @@ Uso (de dentro de hand3d/):
     python desktop.py --foto saida.png # renderiza um quadro parado e sai
     python desktop.py --mac 1,2,3,4,5,6
 
-Controles: mouse orbita, scroll zoom, 1-4 trocam a pose, g gira, w
+Controles: mouse orbita, scroll zoom, 1-9 trocam a pose (conforme gestos.json), g gira, w
 wireframe, i alterna seguir a IMU, f reenquadra.
 """
 import argparse
@@ -51,9 +51,14 @@ def carregar_gestos():
     import json
     with open(os.path.join(AQUI, "gestos.json"), encoding="utf-8") as f:
         d = json.load(f)
-    ordem = [item["clip"] for item in d["ordem"]]
-    classe_para_indice = {item["classe"]: i for i, item in enumerate(d["ordem"])}
-    nomes = {item["clip"]: item["nome"] for item in d["ordem"]}
+    # extras (gestos.json:extras) sao poses desenhadas por osso (nao clipes
+    # do FBX — ver README.md, "Creating new poses"): sem dado de treino, so
+    # alcancaveis por tecla. O desktop.py trata igual as de 'ordem' — a
+    # unica diferenca ja aconteceu antes, na exportacao pro cache.
+    itens = d["ordem"] + d.get("extras", [])
+    ordem = [item["clip"] for item in itens]
+    classe_para_indice = {item["classe"]: i for i, item in enumerate(itens)}
+    nomes = {item["clip"]: item["nome"] for item in itens}
     indice_padrao = ordem.index(d["classe_desconhecida"])
     return ordem, classe_para_indice, indice_padrao, nomes
 
@@ -190,24 +195,33 @@ def myo_loop(repo, mac_manual, espera):
 # shaders
 # ---------------------------------------------------------------------
 
-VERT_MAO = """
+def _gerar_vert_mao(n_poses):
+    """Blend de N posicoes/normais por vertice, ponderado por pose (rota B —
+    ver PLANO-desktop.md). N vem de len(ordem) em gestos.json: cada pose
+    (clipe do FBX ou extra desenhada por osso) e um par de atributos
+    in_posI/in_nrmI; nao ha limite de vertex attribute do GLSL perto disso
+    (16 no minimo garantido, aqui usamos 2 por pose)."""
+    entradas = "\n".join(
+        "in vec3 in_pos%d; in vec3 in_nrm%d;" % (i, i) for i in range(n_poses))
+    termos_pos = " + ".join("in_pos%d * peso[%d]" % (i, i) for i in range(n_poses))
+    termos_nrm = " + ".join("in_nrm%d * peso[%d]" % (i, i) for i in range(n_poses))
+    return """
 #version 330
-in vec3 in_pos0; in vec3 in_pos1; in vec3 in_pos2; in vec3 in_pos3;
-in vec3 in_nrm0; in vec3 in_nrm1; in vec3 in_nrm2; in vec3 in_nrm3;
-uniform vec4 peso;
+%s
+uniform float peso[%d];
 uniform mat3 mundoRot;
 uniform mat4 vp;
 out vec3 v_normal;
 out vec3 v_pos;
 void main() {
-    vec3 pos = in_pos0 * peso.x + in_pos1 * peso.y + in_pos2 * peso.z + in_pos3 * peso.w;
-    vec3 nrm = in_nrm0 * peso.x + in_nrm1 * peso.y + in_nrm2 * peso.z + in_nrm3 * peso.w;
+    vec3 pos = %s;
+    vec3 nrm = %s;
     vec3 posMundo = mundoRot * pos;
     v_normal = normalize(mundoRot * nrm);
     v_pos = posMundo;
     gl_Position = vp * vec4(posMundo, 1.0);
 }
-"""
+""" % (entradas, n_poses, termos_pos, termos_nrm)
 
 # Lambert + luz de borda + fresnel suave, na paleta do web/hand.js
 # (HemisphereLight 0xbcd4ff/0x141a26, luz 0xffffff, borda 0x22d3ee, preenche 0xf472b6)
@@ -330,6 +344,9 @@ class MaoDesktop(mglw.WindowConfig):
                              help="segundos esperando o bracelete no scan antes de desistir")
         parser.add_argument("--foto", default=None, metavar="ARQUIVO.png",
                              help="renderiza alguns quadros parado e salva, sem abrir de fato")
+        parser.add_argument("--pose", default=None, metavar="NOME",
+                             help="comeca nesta pose (nome do clipe em gestos.json, ex.: ThumbsUp) "
+                                  "em vez da padrao — util com --foto pra conferir uma pose nova")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -343,16 +360,23 @@ class MaoDesktop(mglw.WindowConfig):
         self.mod = modelo.carregar(self.ordem)
         print("modelo: %d vertices, poses %s" % (self.mod.n_vertices, self.ordem))
 
-        self.prog_mao = self.ctx.program(vertex_shader=VERT_MAO, fragment_shader=FRAG_MAO)
+        self.prog_mao = self.ctx.program(
+            vertex_shader=_gerar_vert_mao(len(self.ordem)), fragment_shader=FRAG_MAO)
         self.prog_hud = self.ctx.program(vertex_shader=VERT_HUD, fragment_shader=FRAG_HUD)
         self._montar_buffers()
         self._montar_hud()
 
         # ---- estado de pose (mesma suavizacao k = 1-exp(-dt/0.10) do hand.js) ----
-        self.peso = np.array([1.0, 0.0, 0.0, 0.0], dtype="f4")
-        self.alvo = self.peso.copy()
-        self.idx_pose = self.indice_padrao
-        self._por_pose(self.indice_padrao, manual=False)
+        self.fonte = "off"
+        idx_inicial = self.indice_padrao
+        if self.argv.pose:
+            if self.argv.pose not in self.ordem:
+                raise SystemExit("ERRO: --pose '%s' nao esta em gestos.json (opcoes: %s)"
+                                  % (self.argv.pose, ", ".join(self.ordem)))
+            idx_inicial = self.ordem.index(self.argv.pose)
+        self.idx_pose = idx_inicial
+        self._por_pose(idx_inicial, manual=bool(self.argv.pose))
+        self.peso = self.alvo.copy()   # comeca ja na pose padrao, sem flash
 
         # ---- orientacao (ke = 1-exp(-dt/0.12), giro +0.55 rad/s Y) ----
         self.euler = [0.0, 0.0, 0.0]
@@ -360,7 +384,6 @@ class MaoDesktop(mglw.WindowConfig):
         self.seguir_imu = True
         self.girar = False
         self.spin = 0.0
-        self.fonte = "off"
         self.ultimo_dado = 0.0
         self.classe_atual = None
 
@@ -397,7 +420,7 @@ class MaoDesktop(mglw.WindowConfig):
             vbos.append(self.ctx.buffer(nrm.astype("f4").tobytes()))
         self._vbos = vbos     # mantem referencia viva
         conteudo = []
-        for i in range(4):
+        for i in range(len(self.ordem)):
             conteudo.append((vbos[i * 2], "3f", "in_pos%d" % i))
             conteudo.append((vbos[i * 2 + 1], "3f", "in_nrm%d" % i))
         self.vao = self.ctx.vertex_array(self.prog_mao, conteudo)
@@ -425,7 +448,7 @@ class MaoDesktop(mglw.WindowConfig):
     # ------------------------------------------------------------------
     def _por_pose(self, i, manual):
         self.idx_pose = i
-        self.alvo = np.array([1.0 if k == i else 0.0 for k in range(4)], dtype="f4")
+        self.alvo = np.array([1.0 if k == i else 0.0 for k in range(len(self.ordem))], dtype="f4")
         if manual:
             self.fonte = "off" if self.fonte == "off" else "manual"
 
@@ -434,7 +457,9 @@ class MaoDesktop(mglw.WindowConfig):
         keys = self.wnd.keys
         if action != keys.ACTION_PRESS:
             return
-        n = {keys.NUMBER_1: 1, keys.NUMBER_2: 2, keys.NUMBER_3: 3, keys.NUMBER_4: 4}.get(key)
+        teclas_numero = [keys.NUMBER_1, keys.NUMBER_2, keys.NUMBER_3, keys.NUMBER_4,
+                          keys.NUMBER_5, keys.NUMBER_6, keys.NUMBER_7, keys.NUMBER_8, keys.NUMBER_9]
+        n = (teclas_numero.index(key) + 1) if key in teclas_numero else None
         if n and n <= len(self.ordem):
             self._por_pose(n - 1, manual=True)
         elif key == keys.G:

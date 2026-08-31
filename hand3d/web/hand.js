@@ -32,6 +32,10 @@
      pelo fetch no fim deste arquivo, antes de qualquer coisa que precise
      dele (botões, teclado, FBXLoader). */
   var POSES = null;
+  /* poses desenhadas por osso (nao clipes do FBX) — gestos.json:extras.
+     So entram no cache (exportarPoses), nunca nos botoes/teclado da pagina
+     — ver README.md, "Creating new poses". */
+  var EXTRAS = [];
 
   var CORES_CANAL = ['#22d3ee', '#2dd4bf', '#a3e635', '#fbbf24',
                      '#fb923c', '#fb7185', '#f472b6', '#a78bfa'];
@@ -42,7 +46,8 @@
     euler: [0, 0, 0], eulerAlvo: [0, 0, 0],
     rms: null, fonte: 'off', fs: 0, classe: null,
     seguirImu: true, girar: false,
-    ws: null, ultimoDado: 0, ultimoQuadro: 0
+    ws: null, ultimoDado: 0, ultimoQuadro: 0,
+    previsualizando: false   // previsualizarPoseCustom(): pausa a mistura normal
   };
 
   var el = {};
@@ -95,6 +100,20 @@
      * vertice)) e devolve tudo em base64. O modo desktop so interpola essas
      4 posicoes por vertice — perde a mistura em espaco de osso, ganha
      simplicidade (nao precisa reimplementar leitura de FBX em Python). */
+  /* dedo -> cadeia de ossos, da raiz (metacarpo) a ponta. Identificado por
+     investigacao (ver conversa sobre poses novas): indicador e polegar por
+     comportamento nas 4 poses conhecidas (indicador fica reto em
+     "Pointing"; polegar e o unico que fica quase reto em "spock" e dobra
+     em "fist" E em "Pointing"); medio/anelar/minimo por comprimento total
+     da cadeia na bind pose (anatomia: medio > anelar > minimo). */
+  var DEDOS = {
+    polegar: ['Bone005', 'Bone006', 'Bone019'],
+    indicador: ['Bone004', 'Bone016', 'Bone017', 'Bone018'],
+    medio: ['Bone003', 'Bone007', 'Bone008', 'Bone009'],
+    anelar: ['Bone002', 'Bone010', 'Bone011', 'Bone012'],
+    minimo: ['Bone001', 'Bone013', 'Bone014', 'Bone015']
+  };
+
   function b64DeFloat32(arr) {
     var bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
     var bin = '', CH = 0x8000;
@@ -104,38 +123,19 @@
     return btoa(bin);
   }
 
-  function exportarPoses() {
-    if (!modelo || !acoes.length || !POSES) return { erro: 'modelo ainda nao carregou' };
-    var malha = null;
-    modelo.traverse(function (n) { if (n.isSkinnedMesh && !malha) malha = n; });
-    if (!malha) return { erro: 'nenhum SkinnedMesh no modelo' };
-
+  /* Skina (three.js: skinning_vertex.glsl.js/skinnormal_vertex.glsl.js) a
+     malha no estado ATUAL do esqueleto (chame malha.skeleton.update() antes)
+     e leva pro espaco "mundo com pivot zerado" via matrizMundo (ver
+     acharMatrizMundo). Reutilizado por exportarPoses() e por
+     criarPoseCustom(). */
+  function skinarPoseAtual(malha, matrizMundo) {
     var geo = malha.geometry;
     var pos = geo.attributes.position;
     var nrm = geo.attributes.normal;
     var skinIdx = geo.attributes.skinIndex;
     var skinWt = geo.attributes.skinWeight;
     var N = pos.count;
-    var idxArr = geo.index ? geo.index.array : null;
-
-    var pesosOriginais = acoes.map(function (a) { return a ? a.getEffectiveWeight() : 0; });
-    var idxOriginal = st.idx;
-    var pivotRotOriginal = pivot.rotation.clone();
-
-    var out = {
-      n_vertices: N,
-      max_dim: maxDim,
-      indices_u32: idxArr ? b64DeFloat32(Uint32Array.from(idxArr)) : null,
-      poses: {}
-    };
-
-    // pivot em zero: o export ja inclui a centralizacao (obj.position) e a
-    // correcao de eixo (ORIENT), via malha.matrixWorld — assim o desktop.py
-    // so precisa aplicar a rotacao vinda da IMU em cima disto, sem reimplementar
-    // ORIENT nem a conta de centralizacao.
-    pivot.rotation.set(0, 0, 0);
-    cena.updateMatrixWorld(true);
-    var matrizMundo = malha.matrixWorld.clone();
+    var bm = malha.skeleton.boneMatrices;
 
     var bindPos = new THREE.Vector4();
     var bindNrm = new THREE.Vector4();
@@ -147,52 +147,195 @@
     var getComp = ['getX', 'getY', 'getZ', 'getW'];
     function comp(attr, v, j) { return attr[getComp[j]](v); }
 
+    var positions = new Float32Array(N * 3);
+    var normals = new Float32Array(N * 3);
+    for (var v = 0; v < N; v++) {
+      bindPos.set(pos.getX(v), pos.getY(v), pos.getZ(v), 1).applyMatrix4(malha.bindMatrix);
+      bindNrm.set(nrm.getX(v), nrm.getY(v), nrm.getZ(v), 0).applyMatrix4(malha.bindMatrix);
+      acumPos.set(0, 0, 0, 0);
+      acumNrm.set(0, 0, 0, 0);
+      for (var j = 0; j < 4; j++) {
+        var w = comp(skinWt, v, j);
+        if (!w) continue;
+        var bi = comp(skinIdx, v, j);
+        boneMat.fromArray(bm, bi * 16);
+        cp.copy(bindPos).applyMatrix4(boneMat);
+        cn.copy(bindNrm).applyMatrix4(boneMat);
+        acumPos.x += cp.x * w; acumPos.y += cp.y * w; acumPos.z += cp.z * w;
+        acumNrm.x += cn.x * w; acumNrm.y += cn.y * w; acumNrm.z += cn.z * w;
+      }
+      acumPos.applyMatrix4(malha.bindMatrixInverse);
+      acumNrm.applyMatrix4(malha.bindMatrixInverse);
+      // leva pro espaco "de mundo com pivot zerado": ja inclui a
+      // centralizacao e o ORIENT, fixos, calculados uma vez em acharMatrizMundo
+      acumPos.applyMatrix4(matrizMundo);
+      acumNrm.applyMatrix4(matrizMundo);
+      var nlen = Math.hypot(acumNrm.x, acumNrm.y, acumNrm.z) || 1;
+      positions[v * 3] = acumPos.x; positions[v * 3 + 1] = acumPos.y; positions[v * 3 + 2] = acumPos.z;
+      normals[v * 3] = acumNrm.x / nlen; normals[v * 3 + 1] = acumNrm.y / nlen; normals[v * 3 + 2] = acumNrm.z / nlen;
+    }
+    return { position_f32: b64DeFloat32(positions), normal_f32: b64DeFloat32(normals) };
+  }
+
+  function acharMalha() {
+    var malha = null;
+    modelo.traverse(function (n) { if (n.isSkinnedMesh && !malha) malha = n; });
+    return malha;
+  }
+
+  /* pivot em zero: o export ja inclui a centralizacao (obj.position) e a
+     correcao de eixo (ORIENT), via malha.matrixWorld — assim o desktop.py
+     so precisa aplicar a rotacao vinda da IMU em cima disto, sem reimplementar
+     ORIENT nem a conta de centralizacao. Chame com o pivot original salvo;
+     devolve a matriz (calculada uma vez, nao muda entre poses). */
+  function acharMatrizMundo(malha) {
+    var original = pivot.rotation.clone();
+    pivot.rotation.set(0, 0, 0);
+    cena.updateMatrixWorld(true);
+    var m = malha.matrixWorld.clone();
+    pivot.rotation.copy(original);
+    return m;
+  }
+
+  function exportarPoses() {
+    if (!modelo || !acoes.length || !POSES) return { erro: 'modelo ainda nao carregou' };
+    var malha = acharMalha();
+    if (!malha) return { erro: 'nenhum SkinnedMesh no modelo' };
+
+    var geo = malha.geometry;
+    var idxArr = geo.index ? geo.index.array : null;
+    var pesosOriginais = acoes.map(function (a) { return a ? a.getEffectiveWeight() : 0; });
+    var idxOriginal = st.idx;
+    var matrizMundo = acharMatrizMundo(malha);
+
+    var out = {
+      n_vertices: geo.attributes.position.count,
+      max_dim: maxDim,
+      indices_u32: idxArr ? b64DeFloat32(Uint32Array.from(idxArr)) : null,
+      poses: {}
+    };
+
     POSES.forEach(function (p, i) {
       acoes.forEach(function (a, k) { if (a) a.setEffectiveWeight(k === i ? 1 : 0); });
       if (mixer) mixer.update(0);
       cena.updateMatrixWorld(true);
       malha.skeleton.update();
-      var bm = malha.skeleton.boneMatrices;
-
-      var positions = new Float32Array(N * 3);
-      var normals = new Float32Array(N * 3);
-      for (var v = 0; v < N; v++) {
-        bindPos.set(pos.getX(v), pos.getY(v), pos.getZ(v), 1).applyMatrix4(malha.bindMatrix);
-        bindNrm.set(nrm.getX(v), nrm.getY(v), nrm.getZ(v), 0).applyMatrix4(malha.bindMatrix);
-        acumPos.set(0, 0, 0, 0);
-        acumNrm.set(0, 0, 0, 0);
-        for (var j = 0; j < 4; j++) {
-          var w = comp(skinWt, v, j);
-          if (!w) continue;
-          var bi = comp(skinIdx, v, j);
-          boneMat.fromArray(bm, bi * 16);
-          cp.copy(bindPos).applyMatrix4(boneMat);
-          cn.copy(bindNrm).applyMatrix4(boneMat);
-          acumPos.x += cp.x * w; acumPos.y += cp.y * w; acumPos.z += cp.z * w;
-          acumNrm.x += cn.x * w; acumNrm.y += cn.y * w; acumNrm.z += cn.z * w;
-        }
-        acumPos.applyMatrix4(malha.bindMatrixInverse);
-        acumNrm.applyMatrix4(malha.bindMatrixInverse);
-        // leva pro espaco "de mundo com pivot zerado": ja inclui a
-        // centralizacao e o ORIENT, fixos, calculados uma vez acima
-        acumPos.applyMatrix4(matrizMundo);
-        acumNrm.applyMatrix4(matrizMundo);
-        var nlen = Math.hypot(acumNrm.x, acumNrm.y, acumNrm.z) || 1;
-        positions[v * 3] = acumPos.x; positions[v * 3 + 1] = acumPos.y; positions[v * 3 + 2] = acumPos.z;
-        normals[v * 3] = acumNrm.x / nlen; normals[v * 3 + 1] = acumNrm.y / nlen; normals[v * 3 + 2] = acumNrm.z / nlen;
-      }
-      out.poses[p.clip] = { position_f32: b64DeFloat32(positions), normal_f32: b64DeFloat32(normals) };
+      out.poses[p.clip] = skinarPoseAtual(malha, matrizMundo);
     });
 
-    // devolve o mixer e o pivot ao estado visual de antes de exportar
+    // extras (gestos.json:extras) — desenhadas por osso, nao clipes do FBX;
+    // entram no mesmo cache pelo mesmo formato, so nao passam por 'acoes'
+    var erroExtra = null;
+    EXTRAS.forEach(function (ex) {
+      if (erroExtra) return;
+      try {
+        montarPoseCustom(malha, ex.curvas, ex.poseAberta || 'Relaxed');
+        out.poses[ex.clip] = skinarPoseAtual(malha, matrizMundo);
+      } catch (e) {
+        erroExtra = { erro: 'extra "' + ex.clip + '": ' + e.message };
+      }
+    });
+
+    // devolve o mixer ao estado visual de antes de exportar
     acoes.forEach(function (a, k) { if (a) a.setEffectiveWeight(pesosOriginais[k]); });
     if (mixer) mixer.update(0);
-    pivot.rotation.copy(pivotRotOriginal);
     porPose(idxOriginal, false);
 
-    return out;
+    return erroExtra || out;
   }
   window.exportarPoses = exportarPoses;
+
+  /* Monta no esqueleto (bone.quaternion) uma pose descrita por quanto cada
+     dedo dobra. curvas: { polegar: t, indicador: t, medio: t, anelar: t,
+     minimo: t }, cada t em [0,1] — 0 fica com a rotacao do osso em
+     `poseAberta` (padrao "Relaxed"), 1 fica com a de "fist", fracao faz
+     slerp de quaternion entre as duas. Dedo omitido fica em `poseAberta`.
+     Pra usar uma pose de referencia diferente so num dedo (ex: polegar
+     esticado de verdade fica mais parecido com "spock" que com "Relaxed"),
+     passe um objeto em vez de numero: { de: 'spock', para: 'fist', t: 0 }.
+     Ossos que nao sao de dedo (metacarpos etc.) ficam em `poseAberta` —
+     eles nunca mudam entre as 4 poses conhecidas mesmo. */
+  function montarPoseCustom(malha, curvas, poseAberta) {
+    var ossos = malha.skeleton.bones;
+    var porNome = {};
+    ossos.forEach(function (b) { porNome[b.name] = b; });
+
+    var cacheQuats = {};
+    function capturarPose(nomeClipe) {
+      if (cacheQuats[nomeClipe]) return cacheQuats[nomeClipe];
+      var i = POSES.findIndex(function (p) { return p.clip === nomeClipe; });
+      if (i < 0) throw new Error('pose de referencia desconhecida: ' + nomeClipe);
+      acoes.forEach(function (a, k) { if (a) a.setEffectiveWeight(k === i ? 1 : 0); });
+      if (mixer) mixer.update(0);
+      var quats = {};
+      ossos.forEach(function (b) { quats[b.name] = b.quaternion.clone(); });
+      cacheQuats[nomeClipe] = quats;
+      return quats;
+    }
+
+    var base = capturarPose(poseAberta);
+    ossos.forEach(function (b) { b.quaternion.copy(base[b.name]); });
+
+    Object.keys(curvas).forEach(function (dedo) {
+      var cadeia = DEDOS[dedo];
+      if (!cadeia) throw new Error('dedo desconhecido: ' + dedo + ' (use ' + Object.keys(DEDOS).join(', ') + ')');
+      var spec = curvas[dedo];
+      var de = typeof spec === 'object' ? (spec.de || poseAberta) : poseAberta;
+      var para = typeof spec === 'object' ? (spec.para || 'fist') : 'fist';
+      var t = typeof spec === 'object' ? spec.t : spec;
+      var qDe = capturarPose(de), qPara = capturarPose(para);
+      cadeia.forEach(function (nomeOsso) {
+        var b = porNome[nomeOsso];
+        if (!b) return;
+        b.quaternion.copy(qDe[nomeOsso]).slerp(qPara[nomeOsso], t);
+      });
+    });
+
+    malha.skeleton.update();
+    cena.updateMatrixWorld(true);
+  }
+
+  /* Calcula {position_f32, normal_f32} de uma pose custom, pronto pra
+     entrar no cache do jeito que uma pose de exportarPoses() entra. NAO
+     deixa a pose aplicada na tela depois — so calcula e devolve. Ver
+     montarPoseCustom() pro formato de `curvas`. */
+  function criarPoseCustom(curvas, poseAberta) {
+    if (!modelo || !acoes.length || !POSES) return { erro: 'modelo ainda nao carregou' };
+    var malha = acharMalha();
+    if (!malha) return { erro: 'nenhum SkinnedMesh no modelo' };
+
+    var pesosOriginais = acoes.map(function (a) { return a ? a.getEffectiveWeight() : 0; });
+    var idxOriginal = st.idx;
+    var matrizMundo = acharMatrizMundo(malha);
+
+    montarPoseCustom(malha, curvas, poseAberta || 'Relaxed');
+    var resultado = skinarPoseAtual(malha, matrizMundo);
+
+    // devolve o mixer ao estado visual de antes (o loop de render volta a
+    // escrever nos ossos a cada quadro, entao isto so evita 1 quadro torto)
+    acoes.forEach(function (a, k) { if (a) a.setEffectiveWeight(pesosOriginais[k]); });
+    if (mixer) mixer.update(0);
+    porPose(idxOriginal, false);
+
+    return resultado;
+  }
+  window.criarPoseCustom = criarPoseCustom;
+  window.DEDOS = DEDOS;
+
+  /* Aplica uma pose custom e MANTEM na tela — pausa o laco de mistura
+     (senão o quadro seguinte sobrescreve os ossos com a pose manual/da
+     ponte de novo) — pra pré-visualizar um gesto novo antes de decidir os
+     numeros finais. window.pararPrevisualizacao() volta ao normal. */
+  function previsualizarPoseCustom(curvas, poseAberta) {
+    if (!modelo || !acoes.length || !POSES) return { erro: 'modelo ainda nao carregou' };
+    var malha = acharMalha();
+    if (!malha) return { erro: 'nenhum SkinnedMesh no modelo' };
+    montarPoseCustom(malha, curvas, poseAberta || 'Relaxed');
+    st.previsualizando = true;
+    return { ok: true };
+  }
+  window.previsualizarPoseCustom = previsualizarPoseCustom;
+  window.pararPrevisualizacao = function () { st.previsualizando = false; };
 
   function exportarPosesEBaixar() {
     var out = exportarPoses();
@@ -248,6 +391,7 @@
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then(function (d) {
+    EXTRAS = d.extras || [];
     iniciarComPoses(d.ordem.map(function (item) {
       return { clip: item.clip, nome: item.nome, classe: item.classe, cor: item.cor };
     }));
@@ -435,13 +579,16 @@
       redimensionar();
     }
 
-    // pesos caminham suavemente: é o blend do Animator
-    var k = 1 - Math.exp(-dt / 0.10);
-    for (var i = 0; i < st.peso.length; i++) {
-      st.peso[i] += (st.alvo[i] - st.peso[i]) * k;
-      if (acoes[i]) acoes[i].setEffectiveWeight(st.peso[i]);
+    // pesos caminham suavemente: é o blend do Animator (pausado durante
+    // previsualizarPoseCustom, senão este laco sobrescreve a pose manual)
+    if (!st.previsualizando) {
+      var k = 1 - Math.exp(-dt / 0.10);
+      for (var i = 0; i < st.peso.length; i++) {
+        st.peso[i] += (st.alvo[i] - st.peso[i]) * k;
+        if (acoes[i]) acoes[i].setEffectiveWeight(st.peso[i]);
+      }
+      if (mixer) mixer.update(0);        // pose estática: não avança o tempo
     }
-    if (mixer) mixer.update(0);        // pose estática: não avança o tempo
 
     var ke = 1 - Math.exp(-dt / 0.12);
     var segue = st.seguirImu && (st.fonte === 'myo' || st.fonte === 'sim');

@@ -159,19 +159,20 @@ python desktop.py --foto quadro.png  # renders one still frame and exits
 No bridge, no server, no port: `desktop.py` reads the Myo in the same process
 (reuses `feed.py`) and draws into a native OpenGL window (moderngl +
 moderngl-window + pyglet). Controls: **drag** to orbit, **scroll** to zoom,
-**1**–**4** switch the pose, **g** spins, **w** wireframe, **i** toggles
-following the IMU, **f** re-frames the camera.
+**1**–**9** switch the pose (however many are defined in `gestos.json`), **g**
+spins, **w** wireframe, **i** toggles following the IMU, **f** re-frames the
+camera.
 
 The FBX can't be read in Python with bones/weights/animations available (see
 [`PLANO-desktop.md`](PLANO-desktop.md), Step 0) — `assimp-py`, the only
 package installable with just `pip` on this machine, doesn't expose that for
 this file. The data instead comes pre-baked from `web/model/hand.cache.npz`:
 the web page itself (which already knows how to do skinning) computes the
-already-skinned position and normal of each of the 4 poses and exports that
-once — via the "export poses" button on the page, or without opening a
-browser with `python exportar_poses_headless.py` (dev-only,
+already-skinned position and normal of each pose and exports that once — via
+the "export poses" button on the page, or without opening a browser with
+`python exportar_poses_headless.py` (dev-only,
 `pip install playwright && playwright install chromium`). `desktop.py` just
-reads that cache; the GPU blends 4 positions per vertex, weighted by pose —
+reads that cache; the GPU blends N positions per vertex, weighted by pose —
 simpler than bone skinning, at the cost of losing the bone-space blend during
 the transition between gestures (imperceptible in practice).
 
@@ -182,6 +183,101 @@ On a machine with hybrid GPUs (Intel + NVIDIA), the window may open on the
 Intel one — the terminal prints `GL_RENDERER` on startup to confirm. To force
 the NVIDIA one, add `python.exe` under Settings → System → Display → Graphics
 settings, and mark it "high performance".
+
+---
+
+## Creating new poses
+
+The FBX ships with 4 poses (`Relaxed`, `fist`, `spock`, `Pointing`), baked in
+as animation clips. You don't need Blender (or any 3D authoring tool) to add
+more: `web/hand.js` can pose the skeleton directly, bone by bone, and bake
+the result into the same cache the desktop app reads. Three extra poses
+already ship this way — `ThumbsUp`, `Peace`, `RockOn` — as a working example.
+
+![The 7 poses rendered by desktop.py: open hand, fist, spread fingers, pointing, thumbs up, peace sign, rock on](gestures.png)
+
+### The finger → bone map
+
+Identified once by comparing how each bone rotates across the 4 known poses
+(the finger that stays straight in `Pointing` is the index; the one that's
+straight in `spock` but bent in both `fist` and `Pointing` is the thumb) and
+by each chain's total bone length in the bind pose (anatomically middle >
+ring > pinky). It's hardcoded as `DEDOS` in `web/hand.js`:
+
+| finger | bone chain |
+|---|---|
+| `polegar` (thumb) | `Bone005` → `Bone006` → `Bone019` |
+| `indicador` (index) | `Bone004` → `Bone016` → `Bone017` → `Bone018` |
+| `medio` (middle) | `Bone003` → `Bone007` → `Bone008` → `Bone009` |
+| `anelar` (ring) | `Bone002` → `Bone010` → `Bone011` → `Bone012` |
+| `minimo` (pinky) | `Bone001` → `Bone013` → `Bone014` → `Bone015` |
+
+This only needs to be redone if the FBX/rig is ever replaced.
+
+### Describing a pose: how much each finger curls
+
+A new pose is a `curvas` object — how much each finger bends, from 0 (open,
+`Relaxed`'s own rotation) to 1 (closed, `fist`'s rotation) — instead of a set
+of hand-picked rotation angles. Under the hood, `montarPoseCustom()` reads
+the *real* rotation of every bone in `Relaxed` and in `fist` (both already
+correct, since they're real animation clips) and does a quaternion `slerp`
+between the two per finger, by the given fraction. A finger left out of
+`curvas` just stays at the "open" pose.
+
+```json
+"ThumbsUp": {
+  "polegar": { "de": "spock", "para": "fist", "t": 0 },
+  "indicador": 1, "medio": 1, "anelar": 1, "minimo": 1
+}
+```
+
+`indicador: 1` means "index all the way to `fist`'s bend". The thumb needed a
+different reference: `Relaxed`'s own thumb isn't very straight, so instead of
+0/1 against `Relaxed`/`fist`, `{ "de": "spock", "para": "fist", "t": 0 }`
+says "use `spock`'s thumb rotation instead" (`spock` happens to hold the
+thumb straighter than `Relaxed` does). Any of the 4 real poses can be used as
+a `de`/`para` reference for any finger.
+
+### Previewing a pose before committing to it
+
+Open the page (`python serve.py`) and, from the browser console:
+
+```js
+window.previsualizarPoseCustom({
+  indicador: 0, medio: 0,      // straight
+  anelar: 1, minimo: 1,        // curled
+  polegar: 1
+})
+// look at it from every angle (drag/scroll still work); when done:
+window.pararPrevisualizacao()
+```
+
+Fingers that are anatomically close together (index+middle, like in a peace
+sign) can look like a single wider finger from some camera angles even when
+both are correctly extended — rotate the view before concluding a pose is
+wrong.
+
+### Adding it for real
+
+1. Add an entry to the `extras` array in [`gestos.json`](gestos.json) — pick
+   an unused `classe` number (5+; classes 1–4 are tied to real EMG training
+   data in `src/data/`, so anything new should use a number the classifier
+   never emits, unless you also record training data for it with
+   `src/emgGestureTrainer.py`).
+2. Regenerate the cache: `python exportar_poses_headless.py` (or the "export
+   poses" button on the page, then `python modelo.py --importar
+   hand_poses.json`).
+3. That's it — `desktop.py` picks up however many poses are in `gestos.json`
+   automatically (shader, buffers and the `1`–`9` keys all size themselves to
+   match). Try it: `python desktop.py --pose ThumbsUp --foto out.png` renders
+   a single pose without needing the Myo or the live window.
+
+`extras` poses are deliberately **not** added to the web page's own button
+list (`ordem` is), since the page's live picker is tied to real
+`THREE.AnimationClip`s loaded from the FBX — a name with no matching clip
+would show the page's "clip not found" error banner. They still make it into
+the shared cache, because `exportarPoses()` bakes `extras` in separately from
+the clip-matching logic that drives the page's UI.
 
 ---
 
