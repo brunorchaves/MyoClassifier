@@ -47,9 +47,16 @@ sujeitos).
 
 ## Passo a passo de coleta (dados próprios)
 
-A coleta usa a ferramenta que já existe no projeto — [`src/emgGestureTrainer.py`](../src/emgGestureTrainer.py) —
-não é preciso nenhum script novo. Ela grava em `src/data/vals{classe}.dat`, o mesmo
-lugar que o `hand3d`/sistema ao vivo já lê.
+**Jeito recomendado hoje:** `python run.py --painel` dentro de `hand3d/`, aba
+**treinamento** — escolhe o gesto, grava 8s guiado por contagem regressiva e
+feedback visual da soma dos canais, e salva direto em `src/data/vals{classe}.dat`.
+Veja [`hand3d/README.md`](../hand3d/README.md) (seção "One gesture is missing
+training data"). Só grava os 5 gestos que este pipeline já usa (`rest`, `open`,
+`fist`, `spock`, `pointing`) — não dá pra treinar um gesto novo por ali.
+
+O passo a passo abaixo, via [`src/emgGestureTrainer.py`](../src/emgGestureTrainer.py)
+(script legado em pygame), continua funcionando como alternativa — grava no mesmo
+arquivo/formato, então dá pra misturar sessões dos dois jeitos sem problema.
 
 1. **Conecte o Myo** via Bluetooth, do jeito de sempre (ver [`hand3d/README.md`](../hand3d/README.md) se tiver dúvida de pareamento).
 

@@ -45,16 +45,22 @@
      baixo, dedos esticados pra LONGE da camera — visao de primeira
      pessoa, como se a pessoa estivesse olhando a propria mao por tras,
      enfiando os dedos na tela (nao apontando pra fora, pra quem olha).
-     Achado medindo de verdade (nao no olho, a 1a tentativa saiu invertida):
-     o vetor pulso->ponta do dedo medio contra a direcao de visada da
-     camera (produto escalar perto de +1 = dedo alinhado com "pra dentro"),
-     e a normal da palma (dedo indicador x dedo minimo) contra "pra baixo"
-     (perto de +1 = palma pra baixo). roll=180 + pitch=-90 poe a palma pra
-     baixo com os dedos apontando pro fundo da cena, e yaw=-CAM.az (o
-     azimute da propria camera, com o sinal oposto) alinha esse "fundo"
-     com o eixo de visada exato em vez de um lado. Tecla espaco recalibra
-     pra isto — ver ESPACO abaixo. */
-  var EULER_INICIAL = [180, -90, -CAM.az];
+
+     Testado ao vivo (dois pontos, nao suposicao):
+       roll=180, pitch=-90  -> dedos CERTOS (pra longe da camera), palma pra CIMA (errado)
+       roll=0,   pitch=-90  -> dedos ERRADOS (pra tras/pra camera), palma pra BAIXO (certo)
+     roll=180 nega Y e Z do vetor ANTES de yaw/pitch rodarem (rotacao de
+     180 em X, aplicada primeiro nesta ordem XYZ), entao ele inverte junto
+     as duas coisas — nao da pra isolar so a palma mexendo so no roll.
+     pitch e o ULTIMO a rodar (em torno do eixo Z do mundo, depois de roll
+     e yaw ja terem fixado onde os dedos apontam) — girar mais 180 nele so
+     deveria varrer o plano X/Y (onde mora "pra cima/baixo") sem tocar Z
+     (onde deveria morar "pra longe da camera"). Por isso o proximo teste
+     e girar o PITCH e nao o roll: roll volta a 180 (dedos certos) e
+     pitch vira 90 em vez de -90. Ainda nao testado ao vivo — se sair
+     errado de novo, o proximo candidato e inverter o sinal do yaw em vez
+     do pitch. Tecla espaco recalibra pra isto — ver ESPACO abaixo. */
+  var EULER_INICIAL = [180, 90, -CAM.az];
 
   var st = {
     peso: [1, 0, 0, 0], alvo: [1, 0, 0, 0], idx: 0,

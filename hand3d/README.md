@@ -140,7 +140,12 @@ the poses when the armband isn't cooperating.
 | 4 | **0** | `Pointing` — **will never come out of the classifier** |
 
 The "pointing" button works (it's manual), but the Myo will never classify
-that pose. Record class 4 with `src/emgGestureTrainer.py`, or adjust the
+that pose. The easiest way to record it: `python run.py --painel`, click the
+**treinamento** tab and follow the on-screen steps (pick the gesture, hold it
+through an 8s recording, save) — it writes straight into the same
+`src/data/vals4.dat` this table reads, in the format
+[`nn_classifier`](../nn_classifier/README.md) already expects. The older
+route still works too: record with `src/emgGestureTrainer.py`, or adjust the
 `GESTOS` map in `bridge.py` (and `POSES` in `web/hand.js`) to work with three
 gestures. `feed.py` warns about this on startup.
 
