@@ -138,6 +138,16 @@ gestos. O `feed.py` avisa isso ao subir.
 
 ---
 
+## Uma versão desktop, sem navegador?
+
+Está desenhada, mas **ainda não implementada**: veja
+[`PLANO-desktop.md`](PLANO-desktop.md). O resumo é que o render não é o problema —
+o problema é ler o FBX em Python, e o plano registra o levantamento já feito
+(inclusive as medições que descartam fazer o skinning na CPU) para a
+implementação não recomeçar do zero.
+
+---
+
 ## Dá pra apagar o projeto Unity?
 
 Do ponto de vista desta pasta, sim: o FBX está copiado em `web/model/hand.fbx`
