@@ -289,17 +289,20 @@
         if (!b) return;
         b.quaternion.copy(qDe[nomeOsso]).slerp(qPara[nomeOsso], t);
       });
-      // abducao extra (separar/juntar o dedo do vizinho) — gira so o osso
-      // proximal (primeiro da cadeia) no eixo Z local dele, em graus. Achado
-      // por tentativa: Z e o eixo que move o dedo pro lado (X curva/estica,
-      // Y torce em volta do proprio comprimento). Sem isto, indicador e
-      // medio saem quase colados no peace sign (a spock so separa dedo 2-3
-      // do 4-5, nao afasta indicador do medio dentro do mesmo par).
-      if (typeof spec === 'object' && spec.girarZ) {
-        var osso0 = porNome[cadeia[0]];
+      // abducao extra (separar/juntar o dedo do vizinho) — gira a FALANGE
+      // PROXIMAL (segundo osso da cadeia — o primeiro e o metacarpo, que
+      // nunca e animado em nenhuma das 4 poses e tem a malha da palma
+      // colada nele; girar ele em vez do proximal estica a palma toda e
+      // faz um bulge horrivel) no eixo Z local dela. Achado por tentativa:
+      // Z move o dedo pro lado, X curva/estica, Y torce em volta do
+      // proprio comprimento. Sem isto, indicador e medio saem quase
+      // colados no peace sign (a spock separa o par 2-3 do par 4-5, mas
+      // nao afasta indicador do medio dentro do mesmo par).
+      if (typeof spec === 'object' && spec.girarZ && cadeia.length > 1) {
+        var ossoProximal = porNome[cadeia[1]];
         var qZ = new THREE.Quaternion().setFromAxisAngle(
           new THREE.Vector3(0, 0, 1), spec.girarZ * Math.PI / 180);
-        osso0.quaternion.multiply(qZ);
+        ossoProximal.quaternion.multiply(qZ);
       }
     });
 

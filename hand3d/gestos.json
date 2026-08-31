@@ -1,39 +1,86 @@
 {
   "_comentario": "classe do classificador -> clipe do FBX -> rotulo/cor. Fonte unica: bridge.py e desktop.py leem este arquivo, web/hand.js busca por fetch. Veja PLANO-desktop.md, Passo 5.",
   "ordem": [
-    { "classe": 1, "clip": "Relaxed", "nome": "mão aberta", "cor": "#a3e635" },
-    { "classe": 2, "clip": "fist", "nome": "punho fechado", "cor": "#22d3ee" },
-    { "classe": 3, "clip": "spock", "nome": "saudação vulcana", "cor": "#a78bfa" },
-    { "classe": 4, "clip": "Pointing", "nome": "apontando", "cor": "#fbbf24" }
+    {
+      "classe": 1,
+      "clip": "Relaxed",
+      "nome": "mão aberta",
+      "cor": "#a3e635"
+    },
+    {
+      "classe": 2,
+      "clip": "fist",
+      "nome": "punho fechado",
+      "cor": "#22d3ee"
+    },
+    {
+      "classe": 3,
+      "clip": "spock",
+      "nome": "saudação vulcana",
+      "cor": "#a78bfa"
+    },
+    {
+      "classe": 4,
+      "clip": "Pointing",
+      "nome": "apontando",
+      "cor": "#fbbf24"
+    }
   ],
   "classe_desconhecida": "Relaxed",
-
   "_comentario_extras": "poses desenhadas por osso (nao sao clipes do FBX — ver README.md, secao 'Creating new poses'). Sem dado de treino no classificador, so manual/tecla. So entram no cache do modo desktop (exportarPoses() as gera via criarPoseCustom); a pagina web NAO monta botao pra elas, pra nao arriscar o clip-matching do FBXLoader (que so conhece os 4 de 'ordem').",
   "extras": [
     {
-      "classe": 5, "clip": "ThumbsUp", "nome": "polegar pra cima", "cor": "#f472b6",
+      "classe": 5,
+      "clip": "ThumbsUp",
+      "nome": "polegar pra cima",
+      "cor": "#f472b6",
       "poseAberta": "Relaxed",
       "curvas": {
-        "polegar": { "de": "spock", "para": "fist", "t": 0 },
-        "indicador": 1, "medio": 1, "anelar": 1, "minimo": 1
+        "polegar": {
+          "de": "spock",
+          "para": "fist",
+          "t": 0
+        },
+        "indicador": 1,
+        "medio": 1,
+        "anelar": 1,
+        "minimo": 1
       }
     },
     {
-      "classe": 6, "clip": "Peace", "nome": "paz e amor", "cor": "#38bdf8",
+      "classe": 6,
+      "clip": "Peace",
+      "nome": "paz e amor",
+      "cor": "#38bdf8",
       "poseAberta": "Relaxed",
       "curvas": {
-        "indicador": { "de": "spock", "para": "fist", "t": 0, "girarZ": -20 },
-        "medio": { "de": "spock", "para": "fist", "t": 0 },
-        "anelar": 1, "minimo": 1,
+        "indicador": {
+          "de": "spock",
+          "para": "fist",
+          "t": 0,
+          "girarZ": -20
+        },
+        "medio": {
+          "de": "spock",
+          "para": "fist",
+          "t": 0
+        },
+        "anelar": 1,
+        "minimo": 1,
         "polegar": 1
       }
     },
     {
-      "classe": 7, "clip": "RockOn", "nome": "rock and roll", "cor": "#fb7185",
+      "classe": 7,
+      "clip": "RockOn",
+      "nome": "rock and roll",
+      "cor": "#fb7185",
       "poseAberta": "Relaxed",
       "curvas": {
-        "indicador": 0, "minimo": 0,
-        "medio": 1, "anelar": 1,
+        "indicador": 0,
+        "minimo": 0,
+        "medio": 1,
+        "anelar": 1,
         "polegar": 1
       }
     }
