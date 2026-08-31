@@ -6,3 +6,9 @@ joblib
 pyomyo
 pygame
 keyboard
+
+# nn_classifier/ (ver nn_classifier/README.md): instale a build certa pra sua
+# GPU pelo seletor oficial https://pytorch.org/get-started/locally/ antes de
+# so descomentar esta linha -- "pip install torch" sem indice extra baixa so
+# a build CPU.
+# torch

@@ -20,3 +20,12 @@ hand3d/web/model/hand.cache.npz
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Artigos comprados/baixados (papers/README.md tem a lista com DOI) —
+# nao commitar PDFs de terceiros.
+papers/*.pdf
+
+# nn_classifier/ (ver nn_classifier/README.md): dataset publico baixado
+# (~5.5GB) e checkpoints treinados — grandes e reconstruiveis, nao commitar.
+nn_classifier/data/raw/
+nn_classifier/checkpoints/

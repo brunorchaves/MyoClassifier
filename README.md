@@ -38,6 +38,7 @@ See [`hand3d/README.md`](hand3d/README.md) for the full breakdown (browser mode,
   - **[src/myoControlsHand.py](src/myoControlsHand.py)** — the original Myo → Unity control script (superseded by `hand3d/bridge.py`, still compatible with it).
 - **[examples/](examples/)** — scripts adapted from [`pyomyo`](https://github.com/akshaybahadur21/pyomyo) demonstrating raw usage: EMG/IMU streaming, live classifiers, multithreading.
 - **[myTry/](myTry/)** — experiments with feature extraction and a trained k-NN classifier.
+- **[nn_classifier/](nn_classifier/)** — CNN classifier pretrained on the public EMG-EPN612 dataset and fine-tuned on your own recordings; see [`nn_classifier/README.md`](nn_classifier/README.md) for the full pipeline and data-collection walkthrough.
 
 ## Getting Started
 
