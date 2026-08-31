@@ -90,6 +90,9 @@
   orient.rotation.set(ORIENT.rx * d2r, ORIENT.ry * d2r, ORIENT.rz * d2r);
 
   var modelo = null, mixer = null, acoes = [], esqueleto = null, maxDim = 1;
+  // onde a camera mira, em coordenadas de mundo (fica em (0,0,0) ate o
+  // modelo carregar e recalcular a partir do novo pivo do pulso)
+  var foco = new THREE.Vector3();
 
   /* ---------- exportar poses (modo desktop, rota B) ----------
      O assimp-py nao expoe ossos/pesos/animacoes deste FBX (so malha estatica
@@ -408,9 +411,9 @@
     cam.position.set(dist * Math.cos(e) * Math.sin(a),
                      dist * Math.sin(e),
                      dist * Math.cos(e) * Math.cos(a));
-    // mira um pouco acima do centro: a mao desce no quadro e sobra menos
-    // vazio embaixo
-    orbita.target.set(0, maxDim * 0.07, 0);
+    // mira o corpo da mao (foco), nao o pivo do pulso — e um pouco acima
+    // disso, pra sobrar menos vazio embaixo no quadro
+    orbita.target.copy(foco).addScaledVector(new THREE.Vector3(0, 1, 0), maxDim * 0.07);
     orbita.update();
   }
 
@@ -458,7 +461,20 @@
 
     var caixa = new THREE.Box3().setFromObject(obj);
     var tam = caixa.getSize(new THREE.Vector3());
-    obj.position.sub(caixa.getCenter(new THREE.Vector3()));
+    var centro = caixa.getCenter(new THREE.Vector3());
+    /* pivo do pulso, nao o centro geometrico da mao. A pulseira do Myo, no
+       braço de verdade, fica la no antebraco — bem mais pra tras do que o
+       meio da mao. Girar em torno do centro faz a mao "girar em si mesma";
+       girar a partir do limite oposto aos dedos e o que reproduz o pulso
+       balançando de verdade (ver conversa sobre o salto de angulo/pivo).
+       Medido uma vez na bind pose deste FBX (mao aberta): os dedos se
+       espalham para +Z local e o osso raiz do esqueleto (o mais proximo da
+       pulseira real) fica quase no limite -Z — por isso Z e o eixo
+       pulso<->dedos aqui, e caixa.min.z e o limite do lado do pulso. Isto e
+       especifico deste modelo; se o FBX for trocado, meça de novo. */
+    var pivoPulso = new THREE.Vector3(centro.x, centro.y, caixa.min.z);
+    obj.position.sub(pivoPulso);
+    foco.copy(centro).sub(pivoPulso).applyEuler(orient.rotation);
     maxDim = Math.max(tam.x, tam.y, tam.z) || 1;
     enquadrar();
 
@@ -636,7 +652,14 @@
     var ke = 1 - Math.exp(-dt / 0.12);
     var segue = st.seguirImu && (st.fonte === 'myo' || st.fonte === 'sim');
     for (i = 0; i < 3; i++) {
-      st.euler[i] += ((segue ? st.eulerAlvo[i] : 0) - st.euler[i]) * ke;
+      var alvoEuler = segue ? st.eulerAlvo[i] : 0;
+      var deltaEuler = alvoEuler - st.euler[i];
+      // caminho mais curto: sem isto, um alvo que embrulhou em ±180° (ou
+      // que a ponte manda sem o acumulador do feed.py) faz a mao girar pelo
+      // lado errado e "saltar" em vez de suavizar — ver conversa sobre o
+      // salto de angulo na IMU
+      deltaEuler -= Math.round(deltaEuler / 360) * 360;
+      st.euler[i] += deltaEuler * ke;
     }
     // ordem roll, yaw, pitch: mesma que o myListener.cs aplicava
     pivot.rotation.set(st.euler[0] * d2r, st.euler[2] * d2r, st.euler[1] * d2r);

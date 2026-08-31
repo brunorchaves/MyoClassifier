@@ -233,7 +233,11 @@
 
     var k = 1 - Math.exp(-dt / 0.12);
     for (var i = 0; i < 3; i++) {
-      st.euler[i] += (st.eulerAlvo[i] - st.euler[i]) * k;
+      // caminho mais curto: evita o "salto" quando o angulo embrulha em
+      // +-180 (mesmo ajuste de hand.js — ver feed.py:Desembrulhador)
+      var delta = st.eulerAlvo[i] - st.euler[i];
+      delta -= Math.round(delta / 360) * 360;
+      st.euler[i] += delta * k;
     }
     // mesma ordem de eixos usada em hand.js: roll, yaw(Y), pitch(X)
     el.imuCubo.style.transform =

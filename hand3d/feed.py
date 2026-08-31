@@ -66,6 +66,32 @@ def euler_de_quaternion(w, x, y, z):
     return roll, pitch, yaw
 
 
+class Desembrulhador:
+    """Acumula um angulo que sai de atan2/asin — presa a [-180,180] — num
+    valor continuo, sem o salto quando o bracelete cruza esse limite (o
+    mesmo problema que ja apareceu no Colibri). A cada amostra nova, em vez
+    de guardar o angulo bruto, guarda o CAMINHO MAIS CURTO desde a amostra
+    anterior e soma nesse acumulador — que pode passar de 360 ou cair abaixo
+    de -360 sem se importar, porque so representa "quanto girou", nao "onde
+    esta dentro de uma volta". mao3d/desktop.py e o navegador so leem esse
+    valor continuo; nenhum dos dois precisa saber que o bracelete embrulha.
+    """
+
+    def __init__(self):
+        self.anterior = None
+        self.acumulado = 0.0
+
+    def aplicar(self, bruto):
+        if self.anterior is None:
+            self.acumulado = float(bruto)
+        else:
+            delta = bruto - self.anterior
+            delta = (delta + 180) % 360 - 180      # caminho mais curto
+            self.acumulado += delta
+        self.anterior = bruto
+        return self.acumulado
+
+
 class Classificador:
     """1-NN sobre os data/vals*.dat — o mesmo do seu Classifier."""
 
@@ -225,9 +251,11 @@ def main():
     estado = {"euler": (0, 0, 0), "emg": (0,) * 8, "buf": [],
               "hist": deque([0] * HIST, HIST), "cnt": Counter([0] * HIST),
               "pose": None, "n": 0, "t0": time.time(), "ultimo_envio": 0.0}
+    desembrulhar = [Desembrulhador(), Desembrulhador(), Desembrulhador()]  # roll, pitch, yaw
 
     def on_imu(quat, acc, gyro):
-        estado["euler"] = euler_de_quaternion(*quat)
+        bruto = euler_de_quaternion(*quat)
+        estado["euler"] = tuple(desembrulhar[i].aplicar(bruto[i]) for i in range(3))
 
     def on_emg(emg, moving):
         estado["emg"] = emg
