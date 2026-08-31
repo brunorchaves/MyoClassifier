@@ -108,9 +108,18 @@
             if (v > st.pico) st.pico = v;
           }
         });
+        // aba de treinamento (treino.js): repassa o lote bruto pra quem
+        // quiser gravar amostras, sem abrir uma segunda conexao WebSocket.
+        if (window.onLoteEmg) window.onLoteEmg(d.emg);
       }
     };
   }
+
+  // reusado por treino.js -- mesma heuristica de "sem dado" de pintar()/
+  // desenharEmg() abaixo, pra nao duplicar a deteccao de conexao.
+  window.getEstadoPonte = function () {
+    return { semDado: performance.now() - st.ultimoDado > 2500, fs: st.fs };
+  };
 
   // ---------- canvas de EMG ----------
   var canvas = document.getElementById('emgCanvas');

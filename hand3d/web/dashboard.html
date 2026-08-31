@@ -16,6 +16,7 @@
     --disp: "Segoe UI", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body {
     margin: 0; height: 100vh; overflow: hidden; background: var(--bg);
     color: var(--ink); font: 14px/1.5 var(--disp); -webkit-font-smoothing: antialiased;
@@ -58,6 +59,15 @@
   .marca .sub {
     font: 10.5px var(--mono); color: var(--fraco); letter-spacing: .1em; text-transform: uppercase;
   }
+  .abas { display: flex; gap: 6px; flex: none; }
+  .abas button {
+    font: 11px var(--mono); padding: 7px 14px; background: rgba(255,255,255,.035);
+    color: var(--fraco); border: 1px solid var(--linha); border-radius: 999px;
+    cursor: pointer; transition: all .15s; letter-spacing: .03em;
+  }
+  .abas button:hover { border-color: var(--ciano); color: var(--ink2); }
+  .abas button.on { background: rgba(34,211,238,.14); border-color: var(--ciano); color: var(--ciano); }
+
   .topo-dir { display: flex; align-items: center; gap: 10px; flex: none; }
   .pill {
     display: flex; align-items: center; gap: 9px; background: rgba(255,255,255,.035);
@@ -162,6 +172,115 @@
   #cSessao .stat .k { font-size: 10px; color: var(--muted, var(--fraco)); margin-top: 3px; letter-spacing: .04em; text-transform: uppercase; }
 
   ::-webkit-scrollbar { display: none; }
+
+  /* ---------- aba de treinamento ---------- */
+  #treinoView { grid-row: 2 / 4; }
+  .treino-corpo {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 20px;
+    display: grid; grid-template-columns: minmax(0, 640px) 300px; gap: 24px; align-items: start;
+  }
+  .treino-coluna { display: flex; flex-direction: column; min-width: 0; }
+  .fase-treino { display: flex; flex-direction: column; gap: 14px; }
+  .fase-treino h3 { margin: 0; font-size: 18px; font-weight: 600; }
+  .treino-legenda { margin: 0; color: var(--ink2); font-size: 13px; line-height: 1.6; }
+  .treino-info { margin: 0; color: var(--ink2); font-size: 13px; }
+  .treino-info b { color: var(--ambar); font-weight: 600; }
+  .treino-aviso { margin: 0; color: var(--ambar); font: 12.5px var(--mono); }
+  .treino-passos { margin: 0; padding-left: 20px; color: var(--ink2); font-size: 13px; line-height: 1.7; }
+
+  .treino-botoes { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn-treino {
+    font: 12px var(--disp); font-weight: 600; padding: 10px 18px; border-radius: 10px;
+    border: 1px solid var(--ciano); background: rgba(34,211,238,.14); color: var(--ciano);
+    cursor: pointer; transition: all .15s;
+  }
+  .btn-treino:hover { background: rgba(34,211,238,.24); }
+  .btn-treino:disabled { opacity: .45; cursor: default; }
+  .btn-treino.secundario {
+    background: rgba(255,255,255,.035); border-color: var(--linha); color: var(--ink2);
+  }
+  .btn-treino.secundario:hover { border-color: var(--linha2); }
+
+  /* seletor de gesto: botao que abre uma lista (uma linha por gesto, uma
+     embaixo da outra) em vez do grid de cartões de antes */
+  .seletor-gesto { position: relative; max-width: 380px; }
+  .seletor-gesto-botao {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: linear-gradient(165deg, var(--bg2) 0%, var(--bg) 85%);
+    border: 1px solid var(--linha2); border-radius: 10px; padding: 12px 14px;
+    color: var(--ink); font: 13.5px var(--disp); cursor: pointer; transition: border-color .15s;
+  }
+  .seletor-gesto-botao:hover { border-color: var(--ciano); }
+  .seletor-gesto-botao.aberto { border-color: var(--ciano); }
+  .seletor-gesto-rotulo { display: flex; align-items: center; gap: 10px; }
+  .seletor-gesto-rotulo .pontinho { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+  .seletor-gesto-rotulo .placeholder { color: var(--fraco); }
+  .seletor-gesto-seta { color: var(--fraco); font-size: 11px; transition: transform .15s; flex: none; }
+  .seletor-gesto-botao.aberto .seletor-gesto-seta { transform: rotate(180deg); }
+  .seletor-gesto-lista {
+    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20;
+    background: var(--bg2); border: 1px solid var(--linha2); border-radius: 10px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.55); overflow: hidden;
+  }
+  .linha-gesto {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 14px;
+    background: none; border: none; border-bottom: 1px solid var(--linha); cursor: pointer;
+    text-align: left; color: var(--ink); font: 13px var(--disp); transition: background .12s;
+  }
+  .linha-gesto:last-child { border-bottom: none; }
+  .linha-gesto:hover { background: rgba(34,211,238,.10); }
+  .linha-gesto .pontinho { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+  .linha-gesto .nome { flex: 1; }
+  .linha-gesto .contagem { font: 11px var(--mono); color: var(--fraco); flex: none; }
+  .linha-gesto.vazio .contagem { color: var(--ambar); }
+
+  /* painel do dataset (coluna direita, sempre visivel) — antes esse espaço
+     ficava vazio; agora mostra quantas amostras cada gesto já tem */
+  .painel-dataset {
+    background: linear-gradient(165deg, var(--bg2) 0%, var(--bg) 85%);
+    border: 1px solid var(--linha); border-radius: 14px; padding: 16px 16px 14px;
+    display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0;
+  }
+  .painel-dataset h3 {
+    margin: 0 0 8px; font: 600 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fraco); display: flex; align-items: center; gap: 8px;
+  }
+  .painel-dataset h3::before { content: ""; width: 14px; height: 1px; background: var(--ciano); opacity: .7; flex: none; }
+  .dataset-linha {
+    display: flex; align-items: center; gap: 10px; padding: 9px 4px;
+    border-radius: 8px; transition: background .15s;
+  }
+  .dataset-linha.atual { background: rgba(34,211,238,.10); }
+  .dataset-linha .pontinho { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+  .dataset-linha .info { flex: 1; min-width: 0; }
+  .dataset-linha .nome { font-size: 12.5px; color: var(--ink2); }
+  .dataset-linha .barra { height: 5px; border-radius: 3px; background: rgba(255,255,255,.06); margin-top: 5px; overflow: hidden; }
+  .dataset-linha .barra .preenchimento { height: 100%; border-radius: 3px; }
+  .dataset-linha .numero { font: 13px var(--mono); color: var(--ink); flex: none; min-width: 44px; text-align: right; }
+  .dataset-linha.vazio .numero { color: var(--ambar); }
+  .dataset-rule { height: 1px; background: var(--linha); margin: 10px 0; flex: none; }
+  .dataset-total { display: flex; justify-content: space-between; align-items: baseline; font: 11px var(--mono); color: var(--fraco); }
+  .dataset-total b { font-size: 20px; color: var(--ink); font-family: var(--mono); }
+
+  .rev-canvas { width: 100%; height: 70px; border-radius: 8px; background: var(--bg3); }
+
+  .soma-widget { display: flex; align-items: center; gap: 10px; }
+  .soma-widget canvas { flex: 1; height: 90px; border-radius: 8px; background: var(--bg3); }
+  .soma-widget.grande canvas { height: 140px; }
+  .medidor-soma {
+    width: 14px; height: 90px; border-radius: 7px; background: rgba(255,255,255,.06);
+    overflow: hidden; display: flex; flex-direction: column-reverse; flex: none;
+  }
+  .soma-widget.grande .medidor-soma { height: 140px; }
+  .medidor-soma .preenchimento { width: 100%; background: var(--verde); transition: height .08s linear, background .08s linear; }
+
+  .contagem-numero {
+    font: 700 88px var(--mono); text-align: center; color: var(--ciano); line-height: 1;
+    padding: 30px 0;
+  }
+  .grav-cronometro { font: 700 40px var(--mono); color: var(--ink); }
+  .grav-barra { height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .grav-barra-preenchimento { height: 100%; background: var(--ciano); transition: width .1s linear; }
 </style>
 </head>
 <body>
@@ -179,13 +298,17 @@
         <div class="sub">EMG · IMU · classificação em tempo real</div>
       </div>
     </div>
+    <nav class="abas" id="abas">
+      <button class="aba on" data-aba="visualizacao">visualização</button>
+      <button class="aba" data-aba="treinamento">treinamento</button>
+    </nav>
     <div class="topo-dir">
       <div class="pill off" id="pFonte"><i></i><span>procurando a ponte…</span></div>
       <div id="relogio">00:00:00</div>
     </div>
   </header>
 
-  <main>
+  <main id="mainView">
     <section class="painel" id="emgPanel">
       <div class="cab">
         <h2>EMG · 8 canais ao vivo</h2>
@@ -204,7 +327,7 @@
     </section>
   </main>
 
-  <footer>
+  <footer id="footerView">
     <div class="cartao" id="cStatus">
       <h3>fonte do sinal</h3>
       <div class="linha1"><span class="rotulo" id="sRotulo">sem ponte</span></div>
@@ -247,8 +370,119 @@
     </div>
   </footer>
 
+  <section class="painel" id="treinoView" hidden>
+    <div class="cab">
+      <h2>treinamento · grava amostras para o classificador</h2>
+      <div class="info" id="treinoInfoPonte">— ponte —</div>
+    </div>
+    <div class="corpo treino-corpo">
+     <div class="treino-coluna">
+
+      <div class="fase-treino" data-fase="escolha">
+        <p class="treino-legenda">Escolha o gesto que você quer treinar. Os
+          gestos vêm do mesmo conjunto que o classificador já usa — não dá
+          para inventar um gesto novo por aqui.</p>
+        <div class="seletor-gesto">
+          <button type="button" class="seletor-gesto-botao" id="seletorBotao">
+            <span class="seletor-gesto-rotulo" id="seletorRotulo"><span class="placeholder">escolher gesto</span></span>
+            <span class="seletor-gesto-seta">▾</span>
+          </button>
+          <div class="seletor-gesto-lista" id="seletorLista" hidden></div>
+        </div>
+      </div>
+
+      <div class="fase-treino" data-fase="preparar" hidden>
+        <h3>Vamos gravar: <span id="prepNome">—</span></h3>
+        <ol class="treino-passos">
+          <li>Faça e mantenha o gesto com o braço relaxado, sem repetir movimento.</li>
+          <li>Vamos gravar por 8 segundos. Quando a contagem acabar, pode soltar.</li>
+          <li>Nada é salvo até você confirmar — se sair errado, dá para descartar e repetir.</li>
+        </ol>
+        <div class="soma-widget">
+          <canvas id="somaCanvas"></canvas>
+          <div class="medidor-soma"><div class="preenchimento" id="medidorPreenchimento"></div></div>
+        </div>
+        <p class="treino-aviso" id="prepSemSinal" hidden>sem sinal da ponte — verifique se o Myo está conectado</p>
+        <div class="treino-botoes">
+          <button class="btn-treino secundario" id="prepVoltar">← voltar</button>
+          <button class="btn-treino" id="prepComecar">começar contagem</button>
+        </div>
+      </div>
+
+      <div class="fase-treino" data-fase="contagem" hidden>
+        <div class="contagem-numero" id="contagemNumero">3</div>
+        <div class="treino-botoes">
+          <button class="btn-treino secundario" id="contagemCancelar">cancelar</button>
+        </div>
+      </div>
+
+      <div class="fase-treino" data-fase="gravando" hidden>
+        <div id="gravNormal">
+          <div class="grav-cronometro" id="gravTempo">8.0s</div>
+          <div class="grav-barra"><div class="grav-barra-preenchimento" id="gravProgresso"></div></div>
+          <div class="soma-widget grande">
+            <canvas id="somaCanvasGrande"></canvas>
+            <div class="medidor-soma"><div class="preenchimento" id="medidorPreenchimentoGrande"></div></div>
+          </div>
+          <p class="treino-info">amostras capturadas: <b id="gravContador">0</b></p>
+          <div class="treino-botoes">
+            <button class="btn-treino secundario" id="gravParar">parar agora</button>
+          </div>
+        </div>
+        <div id="gravErro" hidden>
+          <p class="treino-aviso">sinal perdido durante a gravação — descarte e tente de novo</p>
+          <div class="treino-botoes">
+            <button class="btn-treino" id="gravErroVoltar">descartar e voltar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="fase-treino" data-fase="revisao" hidden>
+        <h3>Confira antes de salvar</h3>
+        <canvas id="revCanvas" class="rev-canvas"></canvas>
+        <p class="treino-info" id="revResumo">—</p>
+        <p class="treino-aviso" id="revAviso" hidden>gravação bem curta — recomendamos regravar por mais tempo</p>
+        <div class="treino-botoes">
+          <button class="btn-treino secundario" id="revRegravar">descartar e regravar</button>
+          <button class="btn-treino secundario" id="revOutro">escolher outro gesto</button>
+          <button class="btn-treino" id="revSalvar">salvar amostras</button>
+        </div>
+      </div>
+
+      <div class="fase-treino" data-fase="salvando" hidden>
+        <p class="treino-info">salvando…</p>
+      </div>
+
+      <div class="fase-treino" data-fase="salvo" hidden>
+        <div id="salvoOk">
+          <p class="treino-info" id="salvoResumo">—</p>
+          <div class="treino-botoes">
+            <button class="btn-treino secundario" id="salvoMais">gravar mais deste gesto</button>
+            <button class="btn-treino" id="salvoOutro">escolher outro gesto</button>
+          </div>
+        </div>
+        <div id="salvoErro" hidden>
+          <p class="treino-aviso" id="salvoErroMsg">—</p>
+          <div class="treino-botoes">
+            <button class="btn-treino" id="salvoTentarDeNovo">tentar salvar de novo</button>
+          </div>
+        </div>
+      </div>
+
+     </div>
+
+     <aside class="painel-dataset" id="painelDataset">
+       <h3>amostras gravadas</h3>
+       <div id="datasetLinhas"></div>
+       <div class="dataset-rule"></div>
+       <div class="dataset-total"><span>total no dataset</span><b id="datasetTotal">0</b></div>
+     </aside>
+    </div>
+  </section>
+
 </div>
 
 <script src="dashboard.js"></script>
+<script src="treino.js"></script>
 </body>
 </html>
