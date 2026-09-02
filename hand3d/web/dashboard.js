@@ -22,10 +22,26 @@
   var N_CANAIS = 8;
   var JANELA = 640;              // amostras guardadas por canal (~13s a 50Hz)
 
+  /* Orientação do cubo da IMU: pelo QUATERNION cru, como no web/hand.js.
+     Antes o cubo montava a rotação com ângulos de Euler e um mapeamento de
+     eixos feito à mão ('rotateX(-pitch) rotateY(yaw) rotateZ(roll)'), que é
+     a mesma armadilha que a mão 3D tinha — Euler de uma convenção Z-up
+     remontado noutra ordem — e o cubo saía com roll trocado com pitch
+     mesmo depois da mão já estar certa.
+
+     Q_IMU_CENA_BASE e HEADING_GRAUS são CÓPIAS de web/hand.js, que é a
+     fonte da verdade (medidos pela gravidade por resolver_calibracao.py).
+     Se mudarem lá, mudam aqui — não há como o dashboard.js ler a constante
+     de dentro do <iframe> sem acoplar as duas páginas. */
+  var Q_IMU_CENA_BASE = [-0.706714, 0.000000, 0.001382, 0.707498];  // (x,y,z,w)
+  var HEADING_GRAUS = 90;
+
   var st = {
     ws: null, ultimoDado: 0, ultimoPacote: 0,
     fonte: 'off', fs: 0, gesture: null, nome: '—',
     euler: [0, 0, 0], eulerAlvo: [0, 0, 0],
+    quat: null,                            // (x,y,z,w) cru do pacote
+    quatCubo: [0, 0, 0, 1],                // suavizado, é o que o cubo mostra
     rms: new Array(N_CANAIS).fill(0),
     inicio: performance.now(),
     totalAmostras: 0, pico: 0,
@@ -40,6 +56,69 @@
     escreverEm.push(0);
     escala.push(120);
   }
+
+  // ---------- quaternions (o mínimo, sem three.js nesta página) ----------
+  function qMul(a, b) {                    // a*b: aplica b, depois a
+    return [
+      a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+      a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+      a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+      a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ];
+  }
+  function qEixo(eixo, graus) {
+    var r = graus * Math.PI / 360, s = Math.sin(r);
+    return [eixo[0] * s, eixo[1] * s, eixo[2] * s, Math.cos(r)];
+  }
+  // interpolação com correção de sinal: sem ela, o cubo dá meia-volta pelo
+  // lado longo quando o quaternion troca de hemisfério
+  function qSuavizar(atual, alvo, k) {
+    var d = atual[0] * alvo[0] + atual[1] * alvo[1] + atual[2] * alvo[2] + atual[3] * alvo[3];
+    var sinal = d < 0 ? -1 : 1;
+    var q = [0, 0, 0, 0], n = 0;
+    for (var i = 0; i < 4; i++) {
+      q[i] = atual[i] + (alvo[i] * sinal - atual[i]) * k;
+      n += q[i] * q[i];
+    }
+    n = Math.sqrt(n) || 1;
+    return [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
+  }
+  /* Quaternion (cena, Y pra cima) -> matrix3d do CSS (Y pra BAIXO).
+     A conversão é R_css = F * R * F, com F = diag(1,-1,1): conjugar por essa
+     reflexão troca o sentido do eixo Y e devolve uma rotação válida. Usar
+     matrix3d evita decompor em rotateX/Y/Z — foi decompor que trouxe o bug
+     de ordem de eixos aqui. matrix3d é COLUNA-maior. */
+  function cssDeQuat(q) {
+    var x = q[0], y = q[1], z = q[2], w = q[3];
+    var m = [
+      [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+      [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ];
+    var f = [1, -1, 1];
+    var r = [];
+    for (var i = 0; i < 3; i++) {
+      r.push([]);
+      for (var j = 0; j < 3; j++) r[i].push(f[i] * m[i][j] * f[j]);
+    }
+    return 'matrix3d(' + [
+      r[0][0], r[1][0], r[2][0], 0,
+      r[0][1], r[1][1], r[2][1], 0,
+      r[0][2], r[1][2], r[2][2], 0,
+      0, 0, 0, 1,
+    ].map(function (v) { return v.toFixed(5); }).join(',') + ')';
+  }
+
+  // IMU -> cena, já com o heading (mesma composição do hand.js). Normaliza
+  // porque a constante está escrita com 6 casas e não sai exatamente
+  // unitária — sem isso a matriz do CSS acumula ~1e-8 de erro de escala.
+  var Q_IMU_CENA = (function () {
+    var q = HEADING_GRAUS
+      ? qMul(qEixo([0, 1, 0], HEADING_GRAUS), Q_IMU_CENA_BASE)
+      : Q_IMU_CENA_BASE.slice();
+    var n = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]) || 1;
+    return [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
+  })();
 
   function empilhar(canal, valor) {
     buf[canal][escreverEm[canal] % JANELA] = valor;
@@ -95,6 +174,10 @@
       if (d.name) st.nome = String(d.name);
       if (d.euler && d.euler.length >= 3) {
         st.eulerAlvo = [+d.euler[0], +d.euler[1], +d.euler[2]];
+      }
+      // quat cru: (w,x,y,z) no pacote, (x,y,z,w) aqui
+      if (d.quat && d.quat.length === 4) {
+        st.quat = [+d.quat[1], +d.quat[2], +d.quat[3], +d.quat[0]];
       }
       if (d.rms && d.rms.length) st.rms = d.rms.map(Number);
       if (d.emg && d.emg.length) {
@@ -242,17 +325,22 @@
 
     var k = 1 - Math.exp(-dt / 0.12);
     for (var i = 0; i < 3; i++) {
-      // caminho mais curto: evita o "salto" quando o angulo embrulha em
-      // +-180 (mesmo ajuste de hand.js — ver feed.py:Desembrulhador)
+      /* Só a LEITURA numérica (roll/pitch/yaw) continua vindo do Euler —
+         ali ele é o dado certo, é o que o feed.py mede. O caminho mais
+         curto evita o salto quando o ângulo embrulha em ±180. */
       var delta = st.eulerAlvo[i] - st.euler[i];
       delta -= Math.round(delta / 360) * 360;
       st.euler[i] += delta * k;
     }
-    // mesma ordem de eixos usada em hand.js: roll, yaw(Y), pitch(X)
-    el.imuCubo.style.transform =
-      'rotateX(' + (-st.euler[1]).toFixed(1) + 'deg) ' +
-      'rotateY(' + st.euler[2].toFixed(1) + 'deg) ' +
-      'rotateZ(' + st.euler[0].toFixed(1) + 'deg)';
+
+    /* O CUBO vem do quaternion, não do Euler: mesma cadeia do hand.js
+       (Q_IMU_CENA * q_imu), depois convertida pro CSS. Sem calibração de
+       sessão de propósito — este painel mostra o SENSOR, não a pose da mão;
+       o que importa aqui é que os eixos sejam fisicamente corretos. */
+    if (st.quat) {
+      st.quatCubo = qSuavizar(st.quatCubo, qMul(Q_IMU_CENA, st.quat), k);
+      el.imuCubo.style.transform = cssDeQuat(st.quatCubo);
+    }
 
     desenharEmg();
     pintar();
