@@ -29,3 +29,8 @@ papers/*.pdf
 # (~5.5GB) e checkpoints treinados — grandes e reconstruiveis, nao commitar.
 nn_classifier/data/raw/
 nn_classifier/checkpoints/
+
+# Amostras da calibracao de orientacao (web/calibra.html): medidas de uma
+# sessao/braco/webcam especificos, regravaveis em 2 minutos. O resultado
+# da calibracao vira constante no hand.js, esse bruto nao precisa entrar.
+hand3d/calib/

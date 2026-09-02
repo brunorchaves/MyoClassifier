@@ -233,6 +233,8 @@ def main():
     ap.add_argument("--sem-navegador", action="store_true")
     ap.add_argument("--painel", action="store_true",
                     help="abre dashboard.html (EMG + IMU + mao 3D) em vez da pagina simples")
+    ap.add_argument("--calibra", action="store_true",
+                    help="abre calibra.html (webcam/MediaPipe x IMU) pra calibrar a orientacao")
     a = ap.parse_args()
 
     print()
@@ -294,7 +296,8 @@ def main():
     if not esperar_porta(a.porta, 12, "o servidor da pagina"):
         derrubar()
         return 1
-    url = "http://127.0.0.1:%d/%s" % (a.porta, "dashboard.html" if a.painel else "")
+    pagina = "calibra.html" if a.calibra else "dashboard.html" if a.painel else ""
+    url = "http://127.0.0.1:%d/%s" % (a.porta, pagina)
     try:
         urllib.request.urlopen(url, timeout=4).read(64)
     except Exception as e:

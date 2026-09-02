@@ -80,6 +80,16 @@ ESTADO = {
     "gesture": 0,
     "name": "Relaxed",
     "euler": [0.0, 0.0, 0.0],   # roll, pitch, yaw em graus
+    # quaternion CRU da IMU (w,x,y,z), sem passar por Euler. O euler acima
+    # e derivado dele no feed.py e serve pros paineis/telemetria; quem quer
+    # orientar a mao 3D deve usar este quat: Euler tem ordem/permutacao/
+    # sinal ambiguos e foi exatamente o que fez a mao sair na diagonal
+    # (ver web/calibra.html e hand.js).
+    "quat": [1.0, 0.0, 0.0, 0.0],
+    # acelerometro normalizado, no referencial do CORPO. Parado, e a
+    # gravidade: R_imu * acc da a VERTICAL do mundo do Myo, que e o que a
+    # calibracao da orientacao precisa (ver web/calibra.html).
+    "acc": [0.0, 0.0, 1.0],
     "rms": [0.0] * 8,
     "fs": 0.0,                  # taxa de amostragem medida no bracelete
     "src": "—",
@@ -92,6 +102,25 @@ ESTADO = {
 PENDENTES = []
 MAX_PENDENTES = 500            # ~10 s de folga; acima disso descarta o antigo
 LOCK = threading.Lock()
+
+
+def quat_de_euler(roll, pitch, yaw):
+    """(roll,pitch,yaw) em GRAUS -> quaternion (w,x,y,z).
+
+    Inversa exata do euler_de_quaternion() do feed.py: mesma convencao de
+    aeronautica R = Rz(yaw)*Ry(pitch)*Rx(roll). Usada pelos caminhos que
+    so tem Euler (modo --sim e o protocolo de texto antigo do
+    myoControlsHand.py) para que eles tambem publiquem ESTADO["quat"] —
+    a mao 3D orienta pelo quat.
+    """
+    r, p, y = (math.radians(roll) / 2, math.radians(pitch) / 2, math.radians(yaw) / 2)
+    cr, sr = math.cos(r), math.sin(r)
+    cp, sp = math.cos(p), math.sin(p)
+    cy, sy = math.cos(y), math.sin(y)
+    return [cr * cp * cy + sr * sp * sy,
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy]
 
 
 # ----------------------------------------------------------------------
@@ -341,6 +370,10 @@ def aplicar(s):
         with LOCK:
             if "euler" in d:
                 ESTADO["euler"] = [float(x) for x in d["euler"]][:3]
+            if "quat" in d and isinstance(d["quat"], list) and len(d["quat"]) == 4:
+                ESTADO["quat"] = [float(x) for x in d["quat"]]
+            if "acc" in d and isinstance(d["acc"], list) and len(d["acc"]) == 3:
+                ESTADO["acc"] = [float(x) for x in d["acc"]]
             if "gesture" in d:
                 g = int(d["gesture"])
                 ESTADO["gesture"] = g
@@ -370,6 +403,9 @@ def aplicar(s):
     with LOCK:
         # o script manda "roll, -yaw, pitch" nessa ordem
         ESTADO["euler"] = [vals[0], vals[2], vals[1]]
+        # este caminho antigo so tem Euler; converte pra quat porque a mao
+        # 3D orienta por ele (ver ESTADO["quat"])
+        ESTADO["quat"] = quat_de_euler(*ESTADO["euler"])
         if len(vals) >= 4:
             g = int(vals[3])
             ESTADO["gesture"] = g
@@ -409,6 +445,10 @@ def simulador():
             ESTADO["euler"] = [22 * math.sin(t * 0.7),
                                14 * math.sin(t * 0.5 + 1.0),
                                30 * math.sin(t * 0.33)]
+            # o mesmo estado tambem como quaternion: a mao 3D usa o quat
+            # (ver ESTADO["quat"] acima), entao sem isto o modo --sim
+            # ficaria congelado depois que hand.js passou a preferi-lo.
+            ESTADO["quat"] = quat_de_euler(*ESTADO["euler"])
             ESTADO["rms"] = [min(1.0, max(0.0, v + random.uniform(-0.05, 0.05)))
                              for v in base]
             ESTADO["fs"] = 50.0

@@ -41,31 +41,45 @@
                      '#fb923c', '#fb7185', '#f472b6', '#a78bfa'];
 
   // ---------- estado ----------
-  /* pose "inicial" (roll,pitch,yaw): dorso da mao pra cima / palma pra
-     baixo, dedos esticados pra LONGE da camera — visao de primeira
-     pessoa, como se a pessoa estivesse olhando a propria mao por tras,
-     enfiando os dedos na tela (nao apontando pra fora, pra quem olha).
+  /* Não existe mais "EULER_INICIAL". A pose de repouso virou Q_REF (abaixo)
+     e a orientação vem do quaternion da IMU. Os valores antigos ([0,-90,0],
+     [180,-90,-CAM.az], [180,90,-CAM.az]…) foram todos achados por tentativa
+     contra uma montagem de Euler que estava errada de origem — cada um
+     acertava um eixo e desalinhava outro. Histórico completo no comentário
+     de Q_IMU_CENA e em hand3d/README.md. */
 
-     Testado ao vivo (dois pontos, nao suposicao):
-       roll=180, pitch=-90  -> dedos CERTOS (pra longe da camera), palma pra CIMA (errado)
-       roll=0,   pitch=-90  -> dedos ERRADOS (pra tras/pra camera), palma pra BAIXO (certo)
-     roll=180 nega Y e Z do vetor ANTES de yaw/pitch rodarem (rotacao de
-     180 em X, aplicada primeiro nesta ordem XYZ), entao ele inverte junto
-     as duas coisas — nao da pra isolar so a palma mexendo so no roll.
-     pitch e o ULTIMO a rodar (em torno do eixo Z do mundo, depois de roll
-     e yaw ja terem fixado onde os dedos apontam) — girar mais 180 nele so
-     deveria varrer o plano X/Y (onde mora "pra cima/baixo") sem tocar Z
-     (onde deveria morar "pra longe da camera"). Por isso o proximo teste
-     e girar o PITCH e nao o roll: roll volta a 180 (dedos certos) e
-     pitch vira 90 em vez de -90. Ainda nao testado ao vivo — se sair
-     errado de novo, o proximo candidato e inverter o sinal do yaw em vez
-     do pitch. Tecla espaco recalibra pra isto — ver ESPACO abaixo. */
-  var EULER_INICIAL = [180, 90, -CAM.az];
+  /* ---------- orientação: quaternion, não Euler ----------
+     A ORIGEM DE TODO O PROBLEMA era converter a IMU pra Euler e remontar
+     na cena: o feed.py extrai roll/pitch/yaw na convenção de aeronáutica
+     (R = Rz*Ry*Rx, mundo Z-up) e o three.js remontava com outra ordem num
+     mundo Y-up. Cada tentativa de acertar um eixo desalinhava outro
+     ("palma certa mas dedos pra trás", "levanto o braço e vai na
+     diagonal"). Agora o quat CRU da IMU vem no pacote (feed.py) e é usado
+     direto, sem nunca passar por Euler.
+
+     Q_IMU_CENA: a rotação constante IMU -> cena, medida (não chutada) por
+     resolver_calibracao.py a partir da GRAVIDADE — o acelerômetro parado
+     dá a vertical do mundo do Myo, que saiu +z com estabilidade de ±0,7°,
+     conferida contra o eixo do movimento de varredura lateral (1,6° de
+     diferença). O resultado é essencialmente "Z-up -> Y-up".
+
+     Só a vertical precisa casar: com ela alinhada, subir o braço sobe a
+     mão e varrer pro lado varre pro lado. O que sobra é o heading, que um
+     IMU sem bússola não sabe — vive em Q_MONTAGEM, junto com "como o
+     bracelete está vestido no antebraço". Esse fator entra pela DIREITA
+     (multiply), e por isso não distorce movimento nenhum: em rotações
+     relativas ele cancela. É o espaço/auto-calibração que o define. */
+  // construídos depois da checagem de que o three.js carregou (logo abaixo):
+  // usar THREE aqui em cima trocaria a mensagem de erro amigável por um
+  // ReferenceError cru.
+  var Q_IMU_CENA = [-0.706714, 0.000000, 0.001382, 0.707498];   // (x,y,z,w)
+  var Q_REF = null;   // pose de repouso = pivot identidade (pose do ORIENT)
 
   var st = {
     peso: [1, 0, 0, 0], alvo: [1, 0, 0, 0], idx: 0,
-    euler: EULER_INICIAL.slice(), eulerAlvo: EULER_INICIAL.slice(),
-    eulerBruto: [0, 0, 0], offsetCalib: [0, 0, 0],
+    euler: [0, 0, 0],                    // só leitura do painel
+    qImu: null, qAlvo: null, qAtual: null, qMontagem: null,
+    temQuat: false, calibrouAuto: false, giroExtra: 0,
     rms: null, fonte: 'off', fs: 0, classe: null,
     seguirImu: true, girar: false,
     ws: null, ultimoDado: 0, ultimoQuadro: 0,
@@ -87,6 +101,14 @@
   if (!window.THREE) { falhar('three.js não carregou (vendor/three.min.js).'); return; }
   if (!THREE.FBXLoader) { falhar('FBXLoader não carregou (vendor/FBXLoader.js).'); return; }
 
+  // agora dá pra construir os quaternions (ver comentario da orientacao acima)
+  Q_IMU_CENA = new THREE.Quaternion(Q_IMU_CENA[0], Q_IMU_CENA[1], Q_IMU_CENA[2], Q_IMU_CENA[3]);
+  Q_REF = new THREE.Quaternion();
+  st.qImu = new THREE.Quaternion();
+  st.qAlvo = new THREE.Quaternion();
+  st.qAtual = new THREE.Quaternion();
+  st.qMontagem = new THREE.Quaternion();
+
   var palco = document.getElementById('palco');
   var tela = document.getElementById('tela');
   var cena = new THREE.Scene();
@@ -107,14 +129,19 @@
 
   // pivot = o que a IMU gira. orient = correção de eixo, uma vez só.
   var pivot = new THREE.Group(); cena.add(pivot);
+  /* A orientação é escrita em pivot.QUATERNION (ver o bloco Q_IMU_CENA no
+     topo), nunca mais em pivot.rotation — Euler foi a origem do problema.
+     A ordem fica em 'ZYX' só porque é nela que a leitura de Euler mostrada
+     no painel bate com a convenção de roll/pitch/yaw do feed.py. */
+  pivot.rotation.order = 'ZYX';
   var orient = new THREE.Group(); pivot.add(orient);
   var d2r = Math.PI / 180;
   orient.rotation.set(ORIENT.rx * d2r, ORIENT.ry * d2r, ORIENT.rz * d2r);
 
   var modelo = null, mixer = null, acoes = [], esqueleto = null, maxDim = 1;
-  // onde a camera mira, em coordenadas de mundo (fica em (0,0,0) ate o
-  // modelo carregar e recalcular a partir do novo pivo do pulso)
-  var foco = new THREE.Vector3();
+  // de onde saiu o pivo da rotacao (osso do pulso ou fallback), e o marcador
+  // que deixa isso VISIVEL — ver o botao "esqueleto"
+  var nomePivo = '—', marcaPivo = null;
 
   /* ---------- exportar poses (modo desktop, rota B) ----------
      O assimp-py nao expoe ossos/pesos/animacoes deste FBX (so malha estatica
@@ -221,6 +248,18 @@
     return { position_f32: b64DeFloat32(positions), normal_f32: b64DeFloat32(normals) };
   }
 
+  /* osso raiz do esqueleto: o unico cujo pai nao e osso. No braco real e o
+     ponto mais proximo da pulseira, entao e o pivo natural da rotacao que
+     vem da IMU — a mao balança a partir do pulso, nao do meio da palma. */
+  function acharOssoRaiz(raizObj) {
+    var achado = null;
+    raizObj.traverse(function (n) {
+      if (achado || !n.isBone) return;
+      if (!n.parent || !n.parent.isBone) achado = n;
+    });
+    return achado;
+  }
+
   function acharMalha() {
     var malha = null;
     modelo.traverse(function (n) { if (n.isSkinnedMesh && !malha) malha = n; });
@@ -233,11 +272,11 @@
      ORIENT nem a conta de centralizacao. Chame com o pivot original salvo;
      devolve a matriz (calculada uma vez, nao muda entre poses). */
   function acharMatrizMundo(malha) {
-    var original = pivot.rotation.clone();
-    pivot.rotation.set(0, 0, 0);
+    var original = pivot.quaternion.clone();
+    pivot.quaternion.identity();
     cena.updateMatrixWorld(true);
     var m = malha.matrixWorld.clone();
-    pivot.rotation.copy(original);
+    pivot.quaternion.copy(original);
     return m;
   }
 
@@ -426,16 +465,26 @@
   }
   window.addEventListener('resize', redimensionar);
 
+  /* Mira o corpo da mao ONDE ELE ESTA AGORA, nao onde estava ao carregar:
+     a mao gira em torno do pulso (que fica na origem do pivot), entao com
+     uma rotacao grande o corpo dela sai do quadro e o botao "camera" nao
+     resolvia — mirava um ponto congelado do load. Recalcular a caixa em
+     coordenadas de mundo faz o botao sempre reachar a mao, qualquer que
+     seja a pose/rotacao (foi assim que a mao "desapareceu" ao testar uma
+     pose inicial nova). */
   function enquadrar() {
     if (!modelo) return;
+    cena.updateMatrixWorld(true);
+    var centroMundo = new THREE.Box3().setFromObject(modelo).getCenter(new THREE.Vector3());
+    // um pouco acima do centro, pra sobrar menos vazio embaixo no quadro
+    centroMundo.y += maxDim * 0.07;
+
     var dist = maxDim / (2 * Math.tan(cam.fov * Math.PI / 360)) * CAM.zoom;
     var a = CAM.az * d2r, e = CAM.el * d2r;
-    cam.position.set(dist * Math.cos(e) * Math.sin(a),
-                     dist * Math.sin(e),
-                     dist * Math.cos(e) * Math.cos(a));
-    // mira o corpo da mao (foco), nao o pivo do pulso — e um pouco acima
-    // disso, pra sobrar menos vazio embaixo no quadro
-    orbita.target.copy(foco).addScaledVector(new THREE.Vector3(0, 1, 0), maxDim * 0.07);
+    cam.position.set(centroMundo.x + dist * Math.cos(e) * Math.sin(a),
+                     centroMundo.y + dist * Math.sin(e),
+                     centroMundo.z + dist * Math.cos(e) * Math.cos(a));
+    orbita.target.copy(centroMundo);
     orbita.update();
   }
 
@@ -460,17 +509,33 @@
     });
   }
 
-  /* espaco: a orientacao ATUAL do braço passa a valer como EULER_INICIAL
-     (dorso pra cima / palma pra baixo / dedos pra longe da camera) — a
-     mao pula pra essa pose na hora e, dali em diante, os movimentos do
-     braço continuam sendo lidos normalmente, só que relativos a este novo
-     zero. Existe porque o Myo nao tem bussola: o "zero" dele é arbitrário
-     a cada conexão nova, então sem isto toda sessão começa numa pose
-     estranha diferente. */
+  /* espaco: a orientacao ATUAL do braço passa a valer como pose de repouso
+     (Q_REF) — a mao pula pra ela na hora e, dali em diante, os movimentos
+     do braço continuam sendo lidos normalmente, relativos a este novo
+     zero. Existe porque o Myo nao tem bussola: o heading dele é arbitrário
+     a cada conexão, então sem isto toda sessão começaria numa pose
+     estranha diferente. A 1a leitura de cada conexão já faz isto sozinha
+     (ver calibrouAuto); a tecla serve pra refazer quando quiser. */
+  /* orientação do antebraço nos eixos da CENA (só a constante medida) */
+  function orientacaoDaCena(qImu) {
+    return new THREE.Quaternion().copy(Q_IMU_CENA).multiply(qImu);
+  }
+
+  /* espaço (e a auto-calibração da 1a leitura): a orientação ATUAL do braço
+     passa a valer como pose de repouso. Resolve
+        Q_MONTAGEM = (A * q_imu)^-1 * Q_REF
+     que é exatamente o fator da direita — entra depois da rotação da IMU,
+     no referencial do corpo, então muda a pose de partida sem mexer em
+     como o movimento é mapeado. */
   function recalibrar() {
-    st.offsetCalib = st.eulerBruto.map(function (v, i) { return v - EULER_INICIAL[i]; });
-    st.eulerAlvo = EULER_INICIAL.slice();
-    st.euler = EULER_INICIAL.slice();
+    if (!st.temQuat) {
+      st.qAlvo.copy(Q_REF);
+      st.qAtual.copy(Q_REF);
+      return;
+    }
+    st.qMontagem.copy(orientacaoDaCena(st.qImu)).invert().multiply(Q_REF);
+    st.qAlvo.copy(Q_REF);
+    st.qAtual.copy(Q_REF);
   }
 
   fetch('gestos.json').then(function (r) {
@@ -501,21 +566,91 @@
 
     var caixa = new THREE.Box3().setFromObject(obj);
     var tam = caixa.getSize(new THREE.Vector3());
-    var centro = caixa.getCenter(new THREE.Vector3());
-    /* pivo do pulso, nao o centro geometrico da mao. A pulseira do Myo, no
-       braço de verdade, fica la no antebraco — bem mais pra tras do que o
-       meio da mao. Girar em torno do centro faz a mao "girar em si mesma";
-       girar a partir do limite oposto aos dedos e o que reproduz o pulso
-       balançando de verdade (ver conversa sobre o salto de angulo/pivo).
-       Medido uma vez na bind pose deste FBX (mao aberta): os dedos se
-       espalham para +Z local e o osso raiz do esqueleto (o mais proximo da
-       pulseira real) fica quase no limite -Z — por isso Z e o eixo
-       pulso<->dedos aqui, e caixa.min.z e o limite do lado do pulso. Isto e
-       especifico deste modelo; se o FBX for trocado, meça de novo. */
-    var pivoPulso = new THREE.Vector3(centro.x, centro.y, caixa.min.z);
-    obj.position.sub(pivoPulso);
-    foco.copy(centro).sub(pivoPulso).applyEuler(orient.rotation);
     maxDim = Math.max(tam.x, tam.y, tam.z) || 1;
+
+    /* ---------- PIVO DA ROTACAO ----------
+       Onde estava o bug: o codigo media a caixa com Box3.setFromObject(),
+       que devolve MUNDO (ja com o ORIENT aplicado), e subtraia isso de
+       obj.position, que vive no espaco do ORIENT. O proprio comentario
+       antigo dizia "+Z local" — a intencao era local, a implementacao usou
+       mundo. Com ORIENT = (-90, 0, 90) os eixos estao permutados, entao
+       "caixa.min.z" nao era o lado do pulso: a mao girava em torno de um
+       ponto qualquer e saia voando pela tela.
+
+       Por que 'modelo' e o padrao: no Unity, que funcionava, a rotacao ia em
+       transform.rotation do proprio objeto — ou seja, o pivo era a ORIGEM DO
+       FBX, sem deslocamento nenhum (ver
+       3DORientaion_test/Assets/myListener.cs). O deslocamento foi invencao
+       desta port. Voltar ao comportamento do Unity e mais fiel do que
+       inventar um pivo melhor.
+
+       'pulso' fica disponivel caso a origem do FBX NAO esteja no pulso: usa
+       o osso raiz do esqueleto (o mais proximo da pulseira no braco real) e
+       converte pro espaco do ORIENT com worldToLocal, que e o espaco de
+       obj.position. Trocar uma palavra aqui e ver: o botao "esqueleto"
+       desenha eixos na origem do pivot. */
+    /* Queremos a BORDA DO PULSO, nao o centro da mao (a origem do FBX cai
+       perto do centro, e girar ali faz a mao "girar em si mesma" em vez de
+       balançar no pulso como o braço de verdade).
+
+       O eixo da mao NAO e chutado: sai do proprio esqueleto — do osso raiz
+       (a junta do pulso) para a media das PONTAS dos dedos. Com esse eixo em
+       maos, a borda do pulso e o ponto da malha mais "atras" ao longo dele.
+       Tudo e calculado em MUNDO e convertido uma unica vez pro espaco do
+       ORIENT com worldToLocal — que e o espaco de obj.position. Era
+       exatamente essa conversao que faltava antes (media em mundo, aplicada
+       em local, com os eixos permutados pelo ORIENT). */
+    obj.updateWorldMatrix(true, true);
+    var pivoW = null;
+    var osso = acharOssoRaiz(obj);
+    var malhaPivo = acharMalha();
+    if (osso && malhaPivo) {
+      var pulsoW = new THREE.Vector3().setFromMatrixPosition(osso.matrixWorld);
+      var ossosPorNome = {};
+      malhaPivo.skeleton.bones.forEach(function (b) { ossosPorNome[b.name] = b; });
+      var pontas = new THREE.Vector3();
+      var nPontas = 0;
+      Object.keys(DEDOS).forEach(function (dedo) {
+        var cadeia = DEDOS[dedo];
+        var b = ossosPorNome[cadeia[cadeia.length - 1]];
+        if (!b) return;
+        pontas.add(new THREE.Vector3().setFromMatrixPosition(b.matrixWorld));
+        nPontas++;
+      });
+      if (nPontas) {
+        pontas.divideScalar(nPontas);
+        var eixoMao = pontas.clone().sub(pulsoW);
+        if (eixoMao.length() > 1e-6) {
+          eixoMao.normalize();
+          /* Projeta os VERTICES no eixo da mao (nao os cantos da caixa: a
+             caixa e alinhada aos eixos do mundo e, com o eixo da mao na
+             diagonal, o canto passaria longe da borda real). Roda uma vez
+             no carregamento, entao o custo nao importa. */
+          var pos = malhaPivo.geometry.attributes.position;
+          var v = new THREE.Vector3();
+          var menor = Infinity;
+          for (var iv = 0; iv < pos.count; iv++) {
+            v.fromBufferAttribute(pos, iv).applyMatrix4(malhaPivo.matrixWorld);
+            var t = v.sub(pulsoW).dot(eixoMao);
+            if (t < menor) menor = t;
+          }
+          pivoW = pulsoW.clone().addScaledVector(eixoMao, menor);
+          nomePivo = 'borda do pulso (eixo do esqueleto: "' + osso.name +
+                     '" -> ' + nPontas + ' pontas de dedo)';
+        }
+      }
+      if (!pivoW) {
+        pivoW = pulsoW;                     // pelo menos a junta do pulso
+        nomePivo = 'junta do pulso, osso "' + osso.name + '"';
+      }
+    }
+    if (pivoW) {
+      orient.worldToLocal(pivoW);
+      obj.position.sub(pivoW);
+    } else {
+      nomePivo = 'origem do FBX (nao achei esqueleto pra medir o pulso)';
+    }
+    console.log('[hand3d] pivo da rotacao:', nomePivo);
     enquadrar();
 
     var clipes = obj.animations || [];
@@ -585,7 +720,12 @@
     var ws;
     try { ws = new WebSocket(WS); } catch (e) { setTimeout(conectar, 4000); return; }
     st.ws = ws;
-    ws.onclose = function () { setTimeout(conectar, 4000); };
+    ws.onclose = function () {
+      // o "zero" do Myo é arbitrário a cada conexão: ao reconectar, deixa a
+      // 1a leitura nova recalibrar sozinha (ver recalibrar()).
+      st.calibrouAuto = false;
+      setTimeout(conectar, 4000);
+    };
     ws.onmessage = function (ev) {
       var d;
       try { d = JSON.parse(ev.data); } catch (e) { return; }
@@ -595,9 +735,16 @@
       st.fonte = d.src === 'myo' ? 'myo' : d.src === 'sim' ? 'sim' : 'ponte';
       if (d.fs) st.fs = +d.fs;
       if (d.gesture !== undefined) st.classe = +d.gesture;
-      if (d.euler && d.euler.length >= 3) {
-        st.eulerBruto = [+d.euler[0], +d.euler[1], +d.euler[2]];
-        st.eulerAlvo = st.eulerBruto.map(function (v, i) { return v - st.offsetCalib[i]; });
+      // quat CRU da IMU: (w,x,y,z) no pacote, (x,y,z,w) no three.js
+      if (d.quat && d.quat.length === 4) {
+        st.qImu.set(+d.quat[1], +d.quat[2], +d.quat[3], +d.quat[0]);
+        st.temQuat = true;
+        // 1a leitura da sessão já zera: o "zero" do Myo é arbitrário a cada
+        // conexão, então sem isto a mão começaria numa pose qualquer
+        if (!st.calibrouAuto) {
+          st.calibrouAuto = true;
+          recalibrar();
+        }
       }
       if (d.rms && d.rms.length) st.rms = d.rms.map(Number);
       if (d.name && POSES) {
@@ -622,9 +769,22 @@
   };
   document.getElementById('b-osso').onclick = function () {
     if (!modelo) return;
-    if (esqueleto) { cena.remove(esqueleto); esqueleto = null; this.classList.remove('on'); return; }
+    if (esqueleto) {
+      cena.remove(esqueleto); esqueleto = null;
+      if (marcaPivo) { pivot.remove(marcaPivo); marcaPivo = null; }
+      this.classList.remove('on');
+      return;
+    }
     esqueleto = new THREE.SkeletonHelper(modelo);
     cena.add(esqueleto);
+    /* eixos no PIVO da rotacao: e o jeito de VER se o centro de giro esta no
+       pulso ou num ponto qualquer (foi exatamente esse o bug do offset
+       medido em mundo e aplicado em local). Fica preso ao pivot, entao gira
+       junto com a mao. */
+    marcaPivo = new THREE.AxesHelper(maxDim * 0.35);
+    pivot.add(marcaPivo);
+    console.log('[hand3d] eixos na origem do pivot (X vermelho, Y verde, ' +
+                'Z azul). Pivo:', nomePivo);
     this.classList.add('on');
   };
   document.getElementById('b-fio').onclick = function () {
@@ -692,19 +852,24 @@
 
     var ke = 1 - Math.exp(-dt / 0.12);
     var segue = st.seguirImu && (st.fonte === 'myo' || st.fonte === 'sim');
-    for (i = 0; i < 3; i++) {
-      var alvoEuler = segue ? st.eulerAlvo[i] : EULER_INICIAL[i];
-      var deltaEuler = alvoEuler - st.euler[i];
-      // caminho mais curto: sem isto, um alvo que embrulhou em ±180° (ou
-      // que a ponte manda sem o acumulador do feed.py) faz a mao girar pelo
-      // lado errado e "saltar" em vez de suavizar — ver conversa sobre o
-      // salto de angulo na IMU
-      deltaEuler -= Math.round(deltaEuler / 360) * 360;
-      st.euler[i] += deltaEuler * ke;
+    if (segue && st.temQuat) {
+      st.qAlvo.copy(orientacaoDaCena(st.qImu)).multiply(st.qMontagem);
+    } else {
+      st.qAlvo.copy(Q_REF);
     }
-    // ordem roll, yaw, pitch: mesma que o myListener.cs aplicava
-    pivot.rotation.set(st.euler[0] * d2r, st.euler[2] * d2r, st.euler[1] * d2r);
-    if (st.girar) pivot.rotation.y += dt * 0.55;
+    // slerp: caminho mais curto de graça. O truque de "±180" que existia
+    // aqui era remendo do Euler; quaternion não embrulha.
+    st.qAtual.slerp(st.qAlvo, ke);
+    pivot.quaternion.copy(st.qAtual);
+    if (st.girar) {
+      // gira em torno da VERTICAL da cena; premultiply = rotação de mundo
+      st.giroExtra += dt * 0.55;
+      pivot.quaternion.premultiply(
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), st.giroExtra));
+    }
+    // leitura do painel: Euler do que foi realmente aplicado
+    var eLido = new THREE.Euler().setFromQuaternion(st.qAtual, 'ZYX');
+    st.euler = [eLido.x / d2r, eLido.y / d2r, eLido.z / d2r];
 
     if (agora - ultimoPainel > 120) { ultimoPainel = agora; pintarPainel(); }
 

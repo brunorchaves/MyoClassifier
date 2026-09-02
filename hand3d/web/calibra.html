@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyoClassifier — calibração da orientação</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07090f; --bg2: #0c1119; --bg3: #0e131e;
+    --linha: rgba(150,180,230,.16); --linha2: rgba(150,180,230,.32);
+    --ink: #e9eef8; --ink2: #b9c4d8; --fraco: #7d8ba5; --apagado: #5a6579;
+    --ciano: #22d3ee; --verde: #a3e635; --ambar: #fbbf24; --vermelho: #fb7185;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --disp: "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+    font: 14px/1.55 var(--disp); padding: 18px 22px 40px;
+  }
+  h1 { font-size: 18px; margin: 0 0 2px; font-weight: 600; }
+  h1 span { color: var(--ciano); }
+  .sub { font: 10.5px var(--mono); color: var(--fraco); letter-spacing: .1em; text-transform: uppercase; }
+
+  .grade { display: grid; grid-template-columns: minmax(0,1fr) 380px; gap: 18px; margin-top: 18px; align-items: start; }
+  @media (max-width: 980px) { .grade { grid-template-columns: 1fr; } }
+
+  .painel {
+    background: linear-gradient(165deg, var(--bg2) 0%, var(--bg) 82%);
+    border: 1px solid var(--linha); border-radius: 14px; padding: 14px 16px 16px;
+  }
+  .painel h2 {
+    font: 600 11px var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fraco); margin: 0 0 12px;
+  }
+
+  #palco { position: relative; border-radius: 12px; overflow: hidden; background: #000; aspect-ratio: 4/3; }
+  #video, #sobrepor { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #video { object-fit: cover; transform: scaleX(-1); }   /* espelhado: como um espelho */
+  #sobrepor { pointer-events: none; }
+
+  .aviso { font: 12px var(--mono); color: var(--ambar); margin: 10px 0 0; }
+  .erro { font: 12px var(--mono); color: var(--vermelho); margin: 10px 0 0; }
+
+  table { width: 100%; border-collapse: collapse; font: 11.5px var(--mono); }
+  td { padding: 3px 0; color: var(--ink2); }
+  td:first-child { color: var(--fraco); width: 92px; }
+  td b { color: var(--ink); font-weight: 500; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--linha);
+    border-radius: 999px; padding: 5px 12px; font: 11px var(--mono); color: var(--fraco);
+  }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--apagado); }
+  .pill.ok i { background: var(--verde); box-shadow: 0 0 8px var(--verde); }
+  .pill.off i { background: var(--vermelho); }
+
+  ol.poses { list-style: none; counter-reset: p; margin: 0; padding: 0; }
+  ol.poses li {
+    counter-increment: p; display: flex; align-items: center; gap: 10px;
+    padding: 9px 10px; border: 1px solid var(--linha); border-radius: 10px; margin-bottom: 8px;
+    background: rgba(255,255,255,.02);
+  }
+  ol.poses li::before {
+    content: counter(p); font: 600 11px var(--mono); color: var(--fraco);
+    width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--linha2);
+    display: grid; place-items: center; flex: none;
+  }
+  ol.poses li.feita { border-color: rgba(163,230,53,.45); background: rgba(163,230,53,.07); }
+  ol.poses li.feita::before { content: "✓"; color: var(--verde); border-color: var(--verde); }
+  ol.poses li.atual { border-color: var(--ciano); background: rgba(34,211,238,.08); }
+  ol.poses .nome { flex: 1; min-width: 0; }
+  ol.poses .nome b { display: block; font-size: 13px; font-weight: 600; }
+  ol.poses .nome span { font-size: 11.5px; color: var(--fraco); }
+
+  button {
+    font: 600 12px var(--disp); padding: 11px 18px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--ciano); background: rgba(34,211,238,.14); color: var(--ciano);
+    transition: all .15s;
+  }
+  button:hover:not(:disabled) { background: rgba(34,211,238,.26); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.sec { border-color: var(--linha); background: rgba(255,255,255,.035); color: var(--ink2); }
+  .botoes { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+</style>
+</head>
+<body>
+
+<h1>MyoClassifier — <span>calibração da orientação</span></h1>
+<div class="sub">webcam (MediaPipe) × IMU do bracelete</div>
+
+<div class="grade">
+
+  <div>
+    <div class="painel">
+      <h2>webcam · mão detectada</h2>
+      <div id="palco">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="sobrepor"></canvas>
+      </div>
+      <p class="aviso" id="avisoCam">clique em “ligar webcam” para começar</p>
+      <p class="erro" id="erroCam" hidden></p>
+    </div>
+
+    <div class="painel" style="margin-top:18px">
+      <h2>medições ao vivo</h2>
+      <table>
+        <tr><td>mão real</td><td id="mMao"><b>—</b></td></tr>
+        <tr><td>dedos →</td><td id="mDedos">—</td></tr>
+        <tr><td>palma →</td><td id="mPalma">—</td></tr>
+        <tr><td>IMU quat</td><td id="mQuat">—</td></tr>
+        <tr><td>IMU euler</td><td id="mEuler">—</td></tr>
+      </table>
+      <table style="margin-top:10px; border-top:1px solid var(--linha); padding-top:6px">
+        <tr><td>girou (IMU)</td><td id="mGirouImu"><b>—</b></td></tr>
+        <tr><td>girou (mão)</td><td id="mGirouReal"><b>—</b></td></tr>
+        <tr><td>discrepância</td><td id="mDiscrep"><b>—</b></td></tr>
+      </table>
+      <p style="margin:8px 0 0; font-size:11px; color:var(--fraco)">
+        durante a varredura, os dois lados têm que girar o <b>mesmo tanto</b>.
+        Discrepância alta = o punho está dobrando (o Myo só mede o antebraço).
+      </p>
+      <div class="botoes">
+        <span class="pill off" id="pCam"><i></i><span>webcam</span></span>
+        <span class="pill off" id="pMp"><i></i><span>MediaPipe</span></span>
+        <span class="pill off" id="pPonte"><i></i><span>ponte/Myo</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="painel" style="border-color:rgba(34,211,238,.45)">
+      <h2>passo 1 · a vertical (essencial, sem câmera)</h2>
+      <p style="margin:0 0 12px; font-size:12.5px; color:var(--ink2)">
+        Esta é a medida que resolve a orientação. Com o braço <b>parado</b>
+        em qualquer posição, o acelerômetro do bracelete aponta a gravidade —
+        e alinhar essa vertical é tudo o que a mão 3D precisa. O resto
+        (o <i>heading</i>, girar em torno da vertical) um IMU sem bússola não
+        tem como saber, e a tecla <b>espaço</b> já zera ao vivo.
+        <b>Não precisa de webcam.</b>
+      </p>
+      <table>
+        <tr><td>vertical</td><td id="vVetor"><b>—</b></td></tr>
+        <tr><td>estabilidade</td><td id="vEspalha"><b>—</b></td></tr>
+      </table>
+      <div class="botoes">
+        <button id="bVertical">aferir a vertical (3s parado)</button>
+      </div>
+      <p class="aviso" id="vAviso" hidden></p>
+    </div>
+
+    <div class="painel" style="margin-top:18px">
+      <h2>passo 2 · varreduras (conferência, opcional)</h2>
+      <p style="margin:0 0 12px; font-size:12.5px; color:var(--ink2)">
+        Cada varredura grava <b>12 segundos</b> de movimento lento e contínuo
+        (dezenas de amostras), em vez de uma pose só. O que importa acima de
+        tudo: <b>mão rígida com o antebraço</b>, como se estivesse numa tala —
+        se o punho dobrar, a medida não fecha, porque o Myo mede o antebraço e
+        a câmera vê a mão. Mantenha a mão inteira visível.
+      </p>
+      <ol class="poses" id="listaPoses"></ol>
+      <div class="botoes">
+        <button id="bCam">ligar webcam</button>
+        <button id="bCapturar" disabled>gravar varredura (12s)</button>
+        <button class="sec" id="bPular" disabled>próxima</button>
+      </div>
+      <p style="margin:10px 0 0; font-size:11.5px; color:var(--fraco)">
+        clique numa varredura da lista pra escolher ou <b>refazer</b> ela —
+        gravar de novo soma amostras, não apaga nada.
+      </p>
+      <p class="aviso" id="avisoCaptura" hidden></p>
+    </div>
+
+    <div class="painel" style="margin-top:18px">
+      <h2>amostras gravadas</h2>
+      <table>
+        <tr><td>nesta sessão</td><td><b id="nSessao">0</b></td></tr>
+        <tr><td>no arquivo</td><td><b id="nArquivo">—</b></td></tr>
+      </table>
+      <p style="margin:12px 0 0; font-size:11.5px; color:var(--fraco)">
+        Vão para <code>hand3d/calib/amostras.jsonl</code> (uma linha por
+        captura, com o quaternion cru da IMU e a orientação medida da mão).
+        Uma imagem por segundo, com o esqueleto e os números desenhados, vai
+        para <code>hand3d/calib/frames/</code> — é o que permite <b>auditar
+        a captura depois</b>, olhando o que a câmera realmente viu, em vez de
+        confiar só nos números.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="calibra.js"></script>
+</body>
+</html>

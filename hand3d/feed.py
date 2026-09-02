@@ -248,7 +248,8 @@ def main():
         salvar_mac(mac)
     print("  MAC: %s" % ",".join(map(str, mac)), flush=True)
 
-    estado = {"euler": (0, 0, 0), "emg": (0,) * 8, "buf": [],
+    estado = {"euler": (0, 0, 0), "quat": (1.0, 0.0, 0.0, 0.0),
+              "acc": (0.0, 0.0, 1.0), "emg": (0,) * 8, "buf": [],
               "hist": deque([0] * HIST, HIST), "cnt": Counter([0] * HIST),
               "pose": None, "n": 0, "t0": time.time(), "ultimo_envio": 0.0}
     desembrulhar = [Desembrulhador(), Desembrulhador(), Desembrulhador()]  # roll, pitch, yaw
@@ -256,6 +257,20 @@ def main():
     def on_imu(quat, acc, gyro):
         bruto = euler_de_quaternion(*quat)
         estado["euler"] = tuple(desembrulhar[i].aplicar(bruto[i]) for i in range(3))
+        # o quat CRU (w,x,y,z) tambem vai pra ponte: o pyomyo entrega int16
+        # sem escala (unpack('10h'), ver src/pyomyo.py), entao normaliza aqui.
+        # Quem orienta a mao 3D deve usar isto, nao o euler: a conversao pra
+        # Euler introduz ordem/permutacao/sinal ambiguos (foi o que fez a mao
+        # sair na diagonal). Ver hand3d/web/calibra.html.
+        n = math.sqrt(sum(float(v) * float(v) for v in quat)) or 1.0
+        estado["quat"] = tuple(float(v) / n for v in quat)
+        # acelerometro, normalizado: com o braco parado isto E a gravidade,
+        # no referencial do CORPO. Levado pro referencial do mundo pelo quat
+        # (R_imu * acc), da a VERTICAL do mundo do Myo — que e a unica coisa
+        # que a calibracao precisa achar (o heading e indeterminavel sem
+        # bussola e a tecla espaco ja o zera). Ver hand3d/README.md.
+        na = math.sqrt(sum(float(v) * float(v) for v in acc)) or 1.0
+        estado["acc"] = tuple(float(v) / na for v in acc)
 
     def on_emg(emg, moving):
         estado["emg"] = emg
@@ -321,6 +336,8 @@ def main():
             pacote = {
                 "gesture": int(estado["pose"] or 0),
                 "euler": [roll, pitch, yaw],
+                "quat": list(estado["quat"]),
+                "acc": list(estado["acc"]),
                 "rms": [min(1.0, v / 300.0) for v in emg],
                 "emg": lote,                    # forma de onda: todas as amostras
                 "fs": round(estado["n"] / max(1e-6, agora - estado["t0"]), 1),

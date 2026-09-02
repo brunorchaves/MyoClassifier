@@ -151,6 +151,75 @@ gestures. `feed.py` warns about this on startup.
 
 ---
 
+## Orientation calibration — gravity, not guesswork
+
+```bash
+python run.py --calibra          # opens web/calibra.html
+python resolver_calibracao.py    # prints the constant for web/hand.js
+```
+
+**The short version:** the IMU orientation is now applied as a **quaternion**,
+never through Euler angles, and the single constant that maps IMU axes to
+scene axes is *measured from gravity* — the Myo's world is Z-up, the three.js
+scene is Y-up, and that mismatch (fed through a scrambled Euler order) was
+the whole bug. Every symptom along the way — "palm down but fingers
+backwards", "raise the arm and the hand drifts diagonally", "the hand left
+the screen" — was one Euler guess fixing one axis and breaking another.
+
+Why only gravity is needed: **align the vertical and every motion is
+correct.** What's left over is the *heading* (rotation about the vertical),
+which a compass-less IMU cannot know — it lives in `Q_MONTAGEM` together with
+"how the armband happens to be worn", enters from the right, and therefore
+cancels in relative rotations (verified: 200 random mountings, worst-case
+deviation 0.000°). The first reading of each connection sets it
+automatically; **space** redoes it whenever you like.
+
+Measured on this setup: vertical `[+0.002, +0.001, +1.000]` (pure +z),
+stability ±0.7° over 59 readings, cross-checked against the rotation axis of
+a horizontal arm sweep (1.6° apart, independent of the camera).
+
+### The camera path (`web/calibra.html`) — kept as a cross-check
+
+The first attempt measured the hand with the webcam. It is still there and
+still useful for auditing, but it is **not** what produces the constant —
+single-camera MediaPipe turned out too fragile for this (see below):
+
+- your webcam + **MediaPipe Hands** measure the *real* orientation of your
+  hand — an orthonormal frame built from the wrist and the index/pinky
+  knuckles (`x` = across the palm, `y` = palm normal, `z` = wrist→fingers),
+  so it doesn't move when your fingers curl;
+- at the same instant it reads the **raw IMU quaternion** — `feed.py` now
+  publishes `quat` (w,x,y,z, normalized) alongside `euler`, so the
+  orientation path never has to go through Euler again;
+- a 6-pose script (palm down/up/inwards, arm raised, arm to the side,
+  forearm vertical) covers the three rotation axes in both directions;
+- each capture averages ~0.6 s of frames and appends one JSON line to
+  `hand3d/calib/amostras.jsonl` (gitignored — it's specific to one
+  arm/webcam session).
+
+**Why it did not produce the constant.** Measured, not assumed: the hand's
+apparent rotation ran to 179° in 150 ms while the IMU moved 7.9° — a
+detector flip, not motion. The cause is visible in the saved frames: with
+the palm down and the arm out to the side, the hand is seen nearly *edge-on*
+and the palm normal becomes unobservable, so a few pixels of error flip it
+by 180°. Only 11% of samples survived a local-consistency filter, and a fit
+on those looked great (6.7° residual) yet failed both cross-checks —
+hold-out training disagreed by 82.8°, and the physical test (a horizontal
+arm sweep must rotate about gravity) came out 45.4° off vertical. That is
+what motivated the gravity method above, which needs one 3-second reading
+and no camera at all.
+
+`resolver_calibracao.py` reports per-sweep reliability and excludes bad
+sweeps on its own, so the frames plus the numbers stay useful as an audit
+trail even though the constant now comes from gravity.
+
+Notes: the webcam needs a secure context — `http://127.0.0.1` counts, which
+is what `serve.py` serves on. MediaPipe is loaded from a CDN, so the first
+load needs internet. Keep your wrist neutral while capturing: the Myo
+measures the **forearm**, MediaPipe sees the **hand**.
+
+---
+
 ## Desktop mode — native window, no browser
 
 ```bash
