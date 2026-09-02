@@ -68,12 +68,54 @@
      IMU sem bússola não sabe — vive em Q_MONTAGEM, junto com "como o
      bracelete está vestido no antebraço". Esse fator entra pela DIREITA
      (multiply), e por isso não distorce movimento nenhum: em rotações
-     relativas ele cancela. É o espaço/auto-calibração que o define. */
+     relativas ele cancela. É o espaço/auto-calibração que o define.
+
+     CORRECAO_HEADING_GRAUS: resolver_calibracao.py so fixa a VERTICAL —
+     entre as infinitas rotacoes que alinham ela, ele escolhe a rotacao
+     MINIMA, que e uma escolha arbitraria de qual dos dois eixos horizontais
+     (o do "rolar o antebraco" e o do "levantar o braço") cai onde. Reportado
+     ao vivo: saiu roll trocado com pitch (rolar o antebraço aparecia como
+     levantar a mão, e vice-versa) — sinal de que a escolha caiu do lado
+     errado. Uma rotacao extra de 90 graus em torno da VERTICAL DA CENA (nao
+     do Myo) troca os dois sem tocar no eixo vertical (que ja estava certo).
+     Se ainda saltar entre os dois em vez de trocar limpo, o candidato
+     seguinte e 180 (nao ±90).
+
+     POR QUE VOLTOU A 0: o valor 90 foi acertado quando a pose de repouso
+     ainda era a do ORIENT (mao na VERTICAL, dedos pra cima). Depois o
+     Q_REF passou a ser medido (dedos pra frente, palma pra baixo) e a troca
+     reapareceu — porque girar a pose de repouso muda onde os eixos do CORPO
+     da mao ficam em relacao aos eixos da CENA, e a mesma rotacao de cena
+     passa a parecer outro movimento. (Eu tinha afirmado que Q_REF nao
+     mexia no mapeamento; isso vale para os eixos da cena, nao para a
+     leitura anatomica.)
+
+     HISTORICO DOS VALORES: 90 casava com a pose de repouso antiga (mao na
+     vertical). Com a pose medida + ROLL_REPOUSO_GRAUS, 0 deixou o "levantar
+     a mao" saindo como giro (roll), e 90 voltou a ser o valor certo.
+
+     NAO mexe na pose de repouso: em repouso o display e exatamente Q_REF,
+     porque a calibracao resolve Q_MONTAGEM = (A*q_imu)^-1 * Q_REF. Este
+     numero SO altera o mapeamento do movimento — da pra ajustar sem risco
+     de estragar a pose de repouso que ja esta certa.
+
+     Pra achar o valor sem editar arquivo: ajustarHeading(graus) no console
+     do navegador (ver o fim deste arquivo). */
+  var CORRECAO_HEADING_GRAUS = 90;
+
+  /* Giro do PULSO na pose de repouso, em torno do proprio eixo dos dedos:
+     roda a palma sem mudar pra onde os dedos apontam. Pedido direto pra ser
+     hardcode ("era pro roll da mao ta uns 90 graus girado"). Troque o valor
+     aqui — 90, -90 e 180 sao os candidatos uteis — ou ache ao vivo com
+     ajustarRollRepouso(graus) no console. */
+  var ROLL_REPOUSO_GRAUS = 90;
   // construídos depois da checagem de que o three.js carregou (logo abaixo):
   // usar THREE aqui em cima trocaria a mensagem de erro amigável por um
   // ReferenceError cru.
-  var Q_IMU_CENA = [-0.706714, 0.000000, 0.001382, 0.707498];   // (x,y,z,w)
-  var Q_REF = null;   // pose de repouso = pivot identidade (pose do ORIENT)
+  var Q_IMU_CENA_BASE = [-0.706714, 0.000000, 0.001382, 0.707498];   // (x,y,z,w)
+  var Q_IMU_CENA = null;   // = Rot(vertical, heading) * base
+  var Q_REF = null;        // pose de repouso final (medida + roll de repouso)
+  var Q_REF_MEDIDO = null; // a medida crua, antes do roll de repouso
 
   var st = {
     peso: [1, 0, 0, 0], alvo: [1, 0, 0, 0], idx: 0,
@@ -102,12 +144,14 @@
   if (!THREE.FBXLoader) { falhar('FBXLoader não carregou (vendor/FBXLoader.js).'); return; }
 
   // agora dá pra construir os quaternions (ver comentario da orientacao acima)
-  Q_IMU_CENA = new THREE.Quaternion(Q_IMU_CENA[0], Q_IMU_CENA[1], Q_IMU_CENA[2], Q_IMU_CENA[3]);
+  Q_IMU_CENA = new THREE.Quaternion();
   Q_REF = new THREE.Quaternion();
+  Q_REF_MEDIDO = new THREE.Quaternion();
   st.qImu = new THREE.Quaternion();
   st.qAlvo = new THREE.Quaternion();
   st.qAtual = new THREE.Quaternion();
   st.qMontagem = new THREE.Quaternion();
+  aplicarHeading(CORRECAO_HEADING_GRAUS);
 
   var palco = document.getElementById('palco');
   var tela = document.getElementById('tela');
@@ -258,6 +302,106 @@
       if (!n.parent || !n.parent.isBone) achado = n;
     });
     return achado;
+  }
+
+  /* Q_REF MEDIDO, nao chutado.
+
+     A pose de repouso tem que ser "palma pra baixo, dedos pra longe da
+     camera" — o alvo que essa historia toda persegue. O ORIENT, porem, foi
+     desenhado pra outra coisa ("poe a palma de frente", um bom padrao de
+     vitrine), e por isso a mao aparecia na vertical mesmo com a mao real
+     na horizontal. Em vez de adivinhar mais um angulo (foi assim que a
+     saga do EULER_INICIAL se arrastou), mede-se onde a mao APONTA de fato
+     e calcula-se a rotacao que leva esses eixos aos alvos.
+
+     A base da mao sai pela MESMA formula do calibra.js (baseDaMao): dedos =
+     pulso -> media das pontas, lateral = base do indicador -> base do
+     minimo, palma = dedos x lateral. Alvos na cena: palma = -Y (baixo),
+     dedos = -Z (entrando na tela).
+
+     A medida e feita com o pivot na IDENTIDADE: o laco de render pode ja
+     estar rodando (o FBX carrega async) e uma rotacao viva no pivot
+     contaminaria as direcoes, que aqui sao comparadas com alvos fixos da
+     cena. */
+  function medirPoseRepouso(obj, osso, malha) {
+    if (!osso || !malha) return null;
+
+    var pivotOriginal = pivot.quaternion.clone();
+    pivot.quaternion.identity();
+    obj.updateWorldMatrix(true, true);
+
+    var porNome = {};
+    malha.skeleton.bones.forEach(function (b) { porNome[b.name] = b; });
+    function posDe(nome) {
+      var b = porNome[nome];
+      return b ? new THREE.Vector3().setFromMatrixPosition(b.matrixWorld) : null;
+    }
+
+    /* Pega o osso disponivel mais util de uma cadeia: prefere a BASE (o
+       metacarpo, que nao mexe quando o dedo dobra) e cai pra ponta se a base
+       nao estiver no skeleton.bones. A 1a versao exigia a base e voltava
+       null — o console mostrou que o pivo achava as 5 PONTAS mas a medida
+       falhava, ou seja, as bases nao estao na lista de ossos do skin. */
+    function daCadeia(dedo, deTras) {
+      var cadeia = DEDOS[dedo] || [];
+      var ordem = deTras ? cadeia.slice().reverse() : cadeia;
+      for (var i = 0; i < ordem.length; i++) {
+        var p = posDe(ordem[i]);
+        if (p) return { pos: p, nome: ordem[i] };
+      }
+      return null;
+    }
+
+    var pulso = new THREE.Vector3().setFromMatrixPosition(osso.matrixWorld);
+    var pontas = new THREE.Vector3();
+    var n = 0;
+    Object.keys(DEDOS).forEach(function (dedo) {
+      var p = daCadeia(dedo, true);          // ponta primeiro
+      if (p) { pontas.add(p.pos); n++; }
+    });
+    var refIndice = daCadeia('indicador', false);   // base, ou o que houver
+    var refMinimo = daCadeia('minimo', false);
+
+    pivot.quaternion.copy(pivotOriginal);
+    obj.updateWorldMatrix(true, true);
+
+    if (!n || !refIndice || !refMinimo) {
+      console.warn('[hand3d] pose de repouso: pontas=' + n +
+                   ' indicador=' + (refIndice && refIndice.nome) +
+                   ' minimo=' + (refMinimo && refMinimo.nome) +
+                   ' | ossos no skin: ' +
+                   malha.skeleton.bones.map(function (b) { return b.name; }).join(','));
+      return null;
+    }
+    var dedos = pontas.divideScalar(n).sub(pulso);
+    var lateral0 = refMinimo.pos.clone().sub(refIndice.pos);
+    if (dedos.length() < 1e-6 || lateral0.length() < 1e-6) {
+      console.warn('[hand3d] pose de repouso: eixos degenerados — |dedos|=' +
+                   dedos.length().toFixed(6) + ' |lateral|=' + lateral0.length().toFixed(6));
+      return null;
+    }
+    dedos.normalize();
+    lateral0.normalize();
+    var palma = new THREE.Vector3().crossVectors(dedos, lateral0);
+    if (palma.length() < 1e-6) return null;
+    palma.normalize();
+    var lateral = new THREE.Vector3().crossVectors(palma, dedos).normalize();
+    console.log('[hand3d] pose de repouso: eixo lateral de "' + refIndice.nome +
+                '" -> "' + refMinimo.nome + '", ' + n + ' pontas de dedo');
+
+    var alvoPalma = new THREE.Vector3(0, -1, 0);
+    var alvoDedos = new THREE.Vector3(0, 0, -1);
+    var alvoLateral = new THREE.Vector3().crossVectors(alvoPalma, alvoDedos).normalize();
+
+    // Q_REF * frameAtual = frameAlvo  ->  Q_REF = frameAlvo * frameAtual^-1
+    var qAtual = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(lateral, palma, dedos));
+    var qAlvo = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(alvoLateral, alvoPalma, alvoDedos));
+    return {
+      quat: qAlvo.multiply(qAtual.invert()),
+      dedos: dedos, palma: palma, nPontas: n
+    };
   }
 
   function acharMalha() {
@@ -501,7 +645,7 @@
     document.addEventListener('keydown', function (ev) {
       if (ev.key === ' ' || ev.code === 'Space') {
         ev.preventDefault();
-        recalibrar();
+        recalibrar(true);        // true = veio da tecla, mostra confirmacao
         return;
       }
       var n = parseInt(ev.key, 10);
@@ -521,21 +665,53 @@
     return new THREE.Quaternion().copy(Q_IMU_CENA).multiply(qImu);
   }
 
+  /* Os dois ajustes que sobraram, num lugar so. Ambos sao rotacoes no
+     espaco da CENA (premultiply), e o par (heading, rollRepouso) e o que
+     define a leitura anatomica: heading decide qual movimento fisico vira
+     qual movimento na tela; rollRepouso gira a palma na pose de repouso.
+     Expostos no console (ajustarHeading/ajustarRollRepouso) porque acertar
+     esses dois numeros por tentativa via edicao de arquivo custou varias
+     idas e voltas. */
+  function aplicarHeading(graus) {
+    CORRECAO_HEADING_GRAUS = graus;
+    Q_IMU_CENA.set(Q_IMU_CENA_BASE[0], Q_IMU_CENA_BASE[1],
+                   Q_IMU_CENA_BASE[2], Q_IMU_CENA_BASE[3]);
+    if (graus) {
+      Q_IMU_CENA.premultiply(new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0), graus * Math.PI / 180));
+    }
+  }
+
+  function aplicarRollRepouso(graus) {
+    ROLL_REPOUSO_GRAUS = graus;
+    Q_REF.copy(Q_REF_MEDIDO);
+    if (graus) {
+      // eixo dos dedos na pose de repouso medida: -Z da cena
+      Q_REF.premultiply(new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 0, -1), graus * Math.PI / 180));
+    }
+  }
+
   /* espaço (e a auto-calibração da 1a leitura): a orientação ATUAL do braço
      passa a valer como pose de repouso. Resolve
         Q_MONTAGEM = (A * q_imu)^-1 * Q_REF
      que é exatamente o fator da direita — entra depois da rotação da IMU,
      no referencial do corpo, então muda a pose de partida sem mexer em
      como o movimento é mapeado. */
-  function recalibrar() {
-    if (!st.temQuat) {
-      st.qAlvo.copy(Q_REF);
-      st.qAtual.copy(Q_REF);
-      return;
+  function recalibrar(manual) {
+    if (st.temQuat) {
+      st.qMontagem.copy(orientacaoDaCena(st.qImu)).invert().multiply(Q_REF);
     }
-    st.qMontagem.copy(orientacaoDaCena(st.qImu)).invert().multiply(Q_REF);
     st.qAlvo.copy(Q_REF);
     st.qAtual.copy(Q_REF);
+    /* Feedback so pra tecla: recalibrar() tambem roda na auto-calibracao e
+       depois de medir o Q_REF, durante o carregamento — avisar ali poluiria
+       o rotulo da pose. E a restauracao vem de porPose(), nao de um texto
+       salvo antes, pra nao sobrescrever um rotulo mais novo. */
+    if (manual && el.clipe) {
+      el.clipe.textContent = 'zero definido: esta pose = dedos pra frente, palma pra baixo';
+      setTimeout(function () { porPose(st.idx, false); }, 1800);
+    }
   }
 
   fetch('gestos.json').then(function (r) {
@@ -651,6 +827,51 @@
       nomePivo = 'origem do FBX (nao achei esqueleto pra medir o pulso)';
     }
     console.log('[hand3d] pivo da rotacao:', nomePivo);
+
+    /* pose de repouso: palma pra baixo, dedos entrando na tela — medida no
+       esqueleto (ver medirPoseRepouso). Antes Q_REF era a identidade, ou
+       seja, "o que o ORIENT desse", e o ORIENT poe a palma de frente: a mao
+       ficava na vertical com a mao real na horizontal. */
+    var repouso = medirPoseRepouso(obj, osso, malhaPivo);
+    if (repouso) {
+      Q_REF_MEDIDO.copy(repouso.quat);
+      var f = function (v) {
+        return '[' + v.toArray().map(function (x) { return x.toFixed(2); }).join(', ') + ']';
+      };
+      console.log('[hand3d] pose de repouso medida em ' + repouso.nPontas +
+                  ' pontas de dedo: dedos ' + f(repouso.dedos) +
+                  ' e palma ' + f(repouso.palma) +
+                  ' -> alvo dedos [0,0,-1] / palma [0,-1,0]');
+    } else {
+      console.log('[hand3d] nao consegui medir a pose de repouso no esqueleto; ' +
+                  'mantendo a do ORIENT');
+    }
+
+    /* ROLL_REPOUSO_GRAUS: gira a pose de repouso em torno do eixo DOS DEDOS
+       (que, com o Q_REF medido, e o -Z da cena) — roda a palma sem mudar pra
+       onde os dedos apontam. Vale tambem quando a medida falhou: ali o eixo
+       dos dedos nao e exatamente -Z, entao o giro sai aproximado, mas o botao
+       continua servindo. */
+    aplicarRollRepouso(ROLL_REPOUSO_GRAUS);
+    st.qAlvo.copy(Q_REF);
+    st.qAtual.copy(Q_REF);
+    pivot.quaternion.copy(Q_REF);
+    /* RECALIBRA com o Q_REF final. Sem isto, o Q_REF entrava em vigor mas o
+       alvo ao vivo continuava amarrado ao antigo: conectar() roda no fim do
+       arquivo, ANTES do FBX terminar de carregar (load assincrono), entao o
+       1o pacote da IMU ja disparou a auto-calibracao e congelou Q_MONTAGEM
+       contra o Q_REF velho (a identidade). O sintoma era a mao nascer na
+       pose do ORIENT com o painel mostrando angulos perto de zero — zero em
+       relacao ao alvo ERRADO. */
+    if (st.temQuat) recalibrar();
+    var eRef = new THREE.Euler().setFromQuaternion(Q_REF, 'ZYX');
+    console.log('[hand3d] Q_REF final em graus (roll/pitch/yaw): ' +
+                [eRef.x, eRef.y, eRef.z].map(function (a) {
+                  return (a * 180 / Math.PI).toFixed(1);
+                }).join(' / ') +
+                ' | heading ' + CORRECAO_HEADING_GRAUS +
+                ' | roll repouso ' + ROLL_REPOUSO_GRAUS +
+                (st.temQuat ? ' — recalibrado' : ''));
     enquadrar();
 
     var clipes = obj.animations || [];
@@ -876,6 +1097,38 @@
     orbita.update();
     ren.render(cena, cam);
   }
+
+  /* ---------- ajuste ao vivo dos dois numeros que sobraram ----------
+     Achar heading/roll por tentativa editando arquivo e recarregando custou
+     muitas idas e voltas. Aqui da pra varrer os valores no console e ver na
+     hora; depois e so fixar o par no topo do arquivo. */
+  window.ajustarHeading = function (graus) {
+    aplicarHeading(Number(graus) || 0);
+    if (st.temQuat) recalibrar();       // o zero acompanha o mapeamento novo
+    console.log('[hand3d] heading = ' + CORRECAO_HEADING_GRAUS +
+                ' (troca qual movimento fisico vira qual na tela). ' +
+                'Fixe em CORRECAO_HEADING_GRAUS no topo do hand.js.');
+    return CORRECAO_HEADING_GRAUS;
+  };
+  window.ajustarRollRepouso = function (graus) {
+    aplicarRollRepouso(Number(graus) || 0);
+    if (st.temQuat) recalibrar();
+    console.log('[hand3d] roll de repouso = ' + ROLL_REPOUSO_GRAUS +
+                ' (gira a palma em torno dos dedos). ' +
+                'Fixe em ROLL_REPOUSO_GRAUS no topo do hand.js.');
+    return ROLL_REPOUSO_GRAUS;
+  };
+  window.verOrientacao = function () {
+    var e = new THREE.Euler().setFromQuaternion(st.qAtual, 'ZYX');
+    return {
+      heading: CORRECAO_HEADING_GRAUS,
+      rollRepouso: ROLL_REPOUSO_GRAUS,
+      pivo: nomePivo,
+      display_roll_pitch_yaw: [e.x, e.y, e.z].map(function (a) {
+        return +(a * 180 / Math.PI).toFixed(1);
+      })
+    };
+  };
 
   redimensionar();
   conectar();
